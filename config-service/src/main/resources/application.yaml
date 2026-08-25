@@ -9,5 +9,17 @@ spring:
     config:
       server:
         git:
-          uri: file:F:/SpringProjects/OrderService/config-repo
+          # Relative to the PROCESS WORKING DIRECTORY, which must be this module
+          # (config-service/). Enforced by .run/config-service.run.xml for IntelliJ,
+          # and naturally correct when launched via `cd config-service && ./mvnw spring-boot:run`.
+          # Override with CONFIG_REPO_PATH (used by Docker Compose in a later phase).
+          uri: file:${CONFIG_REPO_PATH:../config-repo}
+          # config-repo's branch is `master`, not `main`. Spring Cloud Config defaults to
+          # `main`, so this must stay explicit or lookups fail with "No such label".
           default-label: master
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info

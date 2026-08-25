@@ -3,8 +3,6 @@ package com.demo.inventory_service.models;
 import jakarta.persistence.*;
 import lombok.Data;
 
-import java.math.BigInteger;
-
 @Entity
 @Data
 public class Inventory {

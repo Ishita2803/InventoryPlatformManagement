@@ -1,0 +1,11 @@
+<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="config-service" type="SpringBootApplicationConfigurationType" factoryName="Spring Boot">
+    <module name="Order-Inventory-Platform" />
+    <option name="SPRING_BOOT_MAIN_CLASS" value="com.demo.config_service.ConfigServiceApplication" />
+    <!-- Critical: Config Server resolves file:../config-repo relative to this directory. -->
+    <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$/config-service" />
+    <method v="2">
+      <option name="Make" enabled="true" />
+    </method>
+  </configuration>
+</component>

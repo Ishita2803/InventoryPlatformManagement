@@ -1,0 +1,31 @@
+### Build output
+target/
+!.mvn/wrapper/maven-wrapper.jar
+
+### IDE - IntelliJ
+.idea/
+*.iml
+*.iws
+*.ipr
+out/
+# Shared run configurations ARE committed so every clone can launch the platform
+!.run/
+
+### IDE - Eclipse / VS Code
+.classpath
+.project
+.settings/
+.vscode/
+
+### OS
+Thumbs.db
+.DS_Store
+
+### Logs
+*.log
+logs/
+
+### Local environment overrides (never commit real credentials)
+.env
+*.local.yaml
+*.local.yml

@@ -1,11 +1,9 @@
-server:
-  port: 8080
-
 spring:
   application:
     name: api-gateway-service
 
-eureka:
-  client:
-    service-url:
-      defaultZone: http://localhost:8761/eureka/
+  # Everything else (port, Eureka URL, routes) comes from config-repo/api-gateway-service.yaml
+  # via Config Server. Non-optional on purpose: a missing Config Server should be a
+  # loud startup failure, not a silent fallback to stale local defaults.
+  config:
+    import: configserver:http://localhost:8888
