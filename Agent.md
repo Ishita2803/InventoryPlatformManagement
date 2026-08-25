@@ -185,33 +185,37 @@ All four config clients boot on ports they know *only* from Config Server, repor
 - Tracked branch: **`master`**, not `main`
 
 Rationale: configuration has its own lifecycle and audit trail, and Config Server reads it
-through a real git backend — which is the whole point of using git rather than the `native`
+through a real git backend — the whole point of using git rather than the `native`
 filesystem backend.
 
-**Cloning this repo requires:**
-```bash
-git clone --recurse-submodules <url>
-# or, after a plain clone:
-git submodule update --init --recursive
-```
-Without that, `config-repo/` is empty and **every config client fails to start.**
+### Config Server reads the *remote*, not your local checkout
 
-**Changing configuration is a two-commit operation:**
+Since 2026-08-25 `config-service` points at the **remote URL**, not `file:../config-repo`.
+See §8.3 for why the local path could never work outside this machine.
+
+Two consequences, both good:
+
+- **A plain `git clone` is now enough to run the platform.** `--recurse-submodules` is
+  convenient (it gives you the YAMLs to edit) but no longer required for startup, because
+  Config Server clones the config repository itself at boot.
+- **Config Server needs network at startup.** `clone-on-start: true` makes an unreachable
+  repo a loud boot failure rather than a confusing 500 on the first client request.
+  Override the URI with `CONFIG_REPO_URI` for an offline or air-gapped run.
+
+### Changing configuration
+
 ```bash
 cd config-repo
 # edit yaml
-git add . && git commit -m "..." && git push
+git add . && git commit -m "..." && git push    # push is what makes it live
 cd ..
 git add config-repo && git commit -m "Bump config-repo"   # moves the gitlink
 ```
-Config Server reads **committed** state. An uncommitted yaml edit has no effect — this
-will waste an hour if you forget it.
 
-> ⚠ **The GitHub repository at that URL does not exist yet.** `config-repo`'s history has
-> been squashed to a single clean commit that is ready to push, and `gh` is now installed,
-> but the repository still has to be created — `gh auth login` is interactive and needs a
-> human. Until that happens the submodule URL is a dead link for anyone else cloning.
-> `plan.md` Phase 0.5.
+**Committing is no longer enough — you must push.** Config Server reads the remote, so an
+unpushed commit has no effect. The gitlink bump in the parent repo is bookkeeping: it
+records which config revision this code was tested against, but Config Server ignores it
+and always serves the tip of `master`.
 
 ---
 
@@ -248,20 +252,23 @@ Ordered roughly by how much time each one costs when forgotten.
 2. **Config filenames must equal `spring.application.name`.** The gateway registers as
    `api-gateway-service`, so the file must be `api-gateway-service.yaml`. A mismatch fails
    **silently**, returning 200 with an *empty* `propertySources` — not an error.
-3. **Config Server working directory.** `config-service` resolves
-   `file:${CONFIG_REPO_PATH:../config-repo}` **relative to the process working directory**,
-   which must be `config-service/`.
-   - CLI: `cd config-service && ./mvnw spring-boot:run` — correct automatically.
-   - IntelliJ: use the committed `.run/config-service.run.xml`, which pins
-     `WORKING_DIRECTORY` to `$PROJECT_DIR$/config-service`.
+3. **Never point Config Server at `file:../config-repo`.** It works in this working copy
+   and fails in every clone. Spring Cloud Config's git backend requires `.git` to be a real
+   **directory**; a submodule's `.git` in a fresh clone is a redirect *file*
+   (`gitdir: ../.git/modules/config-repo`), which the backend rejects outright:
 
-   This matters because the project has **one** IntelliJ module rooted at the project
-   directory, so IntelliJ's default working directory is the *project root*, from which
-   `../config-repo` resolves outside the repo entirely. That is exactly the bug that broke
-   the platform before Phase 0. Override `CONFIG_REPO_PATH` for Docker rather than editing
-   the yaml.
-4. **Config Server reads committed state only.** See §6. An edited-but-uncommitted yaml
-   silently has no effect.
+   ```
+   java.lang.IllegalStateException: No .git directory at file:../config-repo
+   ```
+
+   This working copy only survives it because `config-repo/.git` is still a real directory,
+   left over from the pre-submodule nested-repo layout. Fixed 2026-08-25 by pointing
+   `config-service` at the **remote** `https://github.com/Karthik0770/order-platform-config-repo.git`.
+   Because the URI is no longer relative, **the old working-directory constraint is gone** —
+   `.run/config-service.run.xml` still pins it, but nothing depends on that any more.
+4. **Config Server reads pushed state only.** Now that the URI is remote, a config change
+   must be committed **and pushed** before Config Server sees it — committing alone is no
+   longer enough. See §6.
 5. **Reservations have no `orderId`.** `reserveInventory(productId, warehouseId, quantity)`
    is quantity-only. The moment Kafka delivers `OrderPlaced` twice — and at-least-once is
    the default — this double-reserves, and there is no way to release everything belonging
@@ -319,6 +326,30 @@ A 200 with **empty** `propertySources` means the filename doesn't match
 ## 10. Change log
 
 Newest first. Add an entry for every meaningful change.
+
+### 2026-08-25 — Phase 0.5 complete: the platform now actually runs from a clone
+- **Found and fixed a bug that made the project unusable for anyone who cloned it.**
+  Verifying Phase 0.5's exit criterion against a throwaway
+  `git clone --recurse-submodules` showed `config-service` failing with
+  `IllegalStateException: No .git directory at file:../config-repo`. Spring Cloud Config's
+  git backend requires `.git` to be a real directory; in a clone, a submodule's `.git` is a
+  redirect *file*. The local working copy hid this because its `config-repo/.git` is still a
+  real directory left over from the pre-submodule layout.
+  - This also invalidated a claim the 2026-08-21 entry made below: that verification
+    "confirmed JGit follows the submodule's `.git`-file redirect." It never did — the test
+    ran against a working copy where no redirect existed.
+  - It would additionally have broken Phase 15, where the GKE pod gets a clone.
+- **Fix:** `config-service` now reads the **remote** repository
+  (`CONFIG_REPO_URI`, defaulting to the GitHub URL) with `clone-on-start: true`. This is how
+  Config Server is used in production, works from any clone, and needs no change in GKE.
+  Side effect: the working-directory constraint that `.run/config-service.run.xml` existed
+  to enforce is now irrelevant.
+- Created `github.com/Karthik0770/order-platform-config-repo` (public) and pushed
+  `config-repo`'s squashed `master`.
+- **Verified from a fresh clone:** `/actuator/health` → `UP`; all four of order (8081),
+  inventory (8082), notification (8083) and api-gateway (8080) return 200 with populated
+  `propertySources`, sourced from the GitHub URL at revision `5829919`; the dead
+  `api-gateway` name still correctly returns empty `propertySources`.
 
 ### 2026-08-25 — Phase 0.5: Phase 0's work committed at last
 - **Committed Phase 0.** It had been sitting entirely uncommitted since 2026-08-21 — the

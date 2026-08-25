@@ -9,14 +9,24 @@ spring:
     config:
       server:
         git:
-          # Relative to the PROCESS WORKING DIRECTORY, which must be this module
-          # (config-service/). Enforced by .run/config-service.run.xml for IntelliJ,
-          # and naturally correct when launched via `cd config-service && ./mvnw spring-boot:run`.
-          # Override with CONFIG_REPO_PATH (used by Docker Compose in a later phase).
-          uri: file:${CONFIG_REPO_PATH:../config-repo}
+          # Config Server clones this repository into a local temp directory at startup.
+          #
+          # A REMOTE uri is used deliberately, not a local `file:../config-repo` path.
+          # The local path works only in this working copy, where config-repo/.git happens
+          # to be a real directory. In any fresh clone, a submodule's .git is a redirect
+          # FILE ("gitdir: ../.git/modules/config-repo"), and the git backend rejects it
+          # with "No .git directory at file:../config-repo" -- so the whole platform failed
+          # to start for anyone who cloned. Verified 2026-08-25.
+          #
+          # This is also how Config Server is used in production, and it needs no change
+          # when it runs as a pod in GKE.
+          uri: ${CONFIG_REPO_URI:https://github.com/Karthik0770/order-platform-config-repo.git}
           # config-repo's branch is `master`, not `main`. Spring Cloud Config defaults to
           # `main`, so this must stay explicit or lookups fail with "No such label".
           default-label: master
+          # Fail loudly at startup if the repo is unreachable, rather than on the first
+          # client request.
+          clone-on-start: true
 
 management:
   endpoints:

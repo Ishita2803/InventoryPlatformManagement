@@ -38,8 +38,8 @@ GCP plumbing, not about learning Docker under deadline.
 | Event class sharing | **Duplicated per service** | Services stay independently deployable. A shared event jar couples deployments — a known anti-pattern interviewers probe. |
 | `payment-service` | **In scope, mocked** | A pure-Kafka design has *no* synchronous inter-service call, so Resilience4j would be decoration. Payment gives the circuit breaker a real target and makes Saga compensation meaningful. |
 | Phases 1 + 2 | Built in parallel | Inventory hardening and the Order domain are independent; both must land before Kafka. |
-| Config backend | Git backend, relative URI | No machine-specific absolute paths in version control. |
-| `config-repo` | Real git submodule | Preserves the git-backed-config story. |
+| Config backend | Git backend, **remote URI** | A `file:` path to the submodule works only in the original working copy — in any clone, a submodule's `.git` is a redirect file the backend rejects. Reading the remote is also how Config Server is used in production and needs no change on GKE. Changed 2026-08-25 after the clone test failed. |
+| `config-repo` | Real git submodule, for editing only | Preserves the git-backed-config story. Since Config Server reads the remote, the submodule is now a convenience, not a startup requirement. |
 | Cloud sequencing | **All local first** | Chosen 2026-08-25. Trade-off noted above. |
 | MySQL on GCP | **Compute Engine VM**, not Cloud SQL | Cheaper, and you wanted to manage it. Cloud SQL's cheapest tier costs more than the rest of this deployment combined. |
 | Kafka on GCP | **Same VM as MySQL** | Confirmed feasible on an `e2-medium` (4 GB) with tuned heaps. Cheapest option, keeps stateful workloads off Kubernetes, and reuses the Phase 3 Compose file almost verbatim. Single broker = no real HA; say so honestly in interviews. |
@@ -52,7 +52,7 @@ GCP plumbing, not about learning Docker under deadline.
 
 # Part A — Local
 
-## Phase 0 — Unblock and tidy ✅ *(done 2026-08-21, not yet committed)*
+## Phase 0 — Unblock and tidy ✅ *(done 2026-08-21, committed 2026-08-25)*
 
 - [x] Config Server URI → `file:${CONFIG_REPO_PATH:../config-repo}`
 - [x] `.run/config-service.run.xml` pins the working directory for IntelliJ
@@ -65,22 +65,36 @@ GCP plumbing, not about learning Docker under deadline.
 **Exit:** met. `http://localhost:8888/order-service/default` returns populated
 `propertySources`, and all four services show `UP` at `http://localhost:8761`.
 
-## Phase 0.5 — Commit the backlog *(do this first — nothing below is safe until it lands)*
+## Phase 0.5 — Commit the backlog ✅ *(done 2026-08-25)*
 
-Phase 0's work is **entirely uncommitted**. `git status` shows `CLAUDE.md`, `.gitignore`,
-`.run/` and `docs/` untracked plus six modified files. One careless `git checkout` loses
-all of it.
+Phase 0's work had been sitting **entirely uncommitted** since 2026-08-21 — one careless
+`git checkout` from being lost.
 
-- [ ] Create `https://github.com/Karthik0770/order-platform-config-repo` on GitHub and
-      push `config-repo`'s `master`. **The submodule URL is currently a dead link** —
-      anyone cloning gets an empty `config-repo/` and every config client fails to start.
-- [ ] Commit `config-repo`'s own history, then bump the gitlink in the parent repo
-- [ ] Commit Phase 0 in the parent repo: `.gitignore`, `.run/`, `Agent.md`, `plan.md`,
-      the `.idea/` deletions, and the six modified files
-- [ ] Push the parent repo; verify a fresh `git clone --recurse-submodules` into a temp
-      directory yields a populated `config-repo/`
+- [x] Created `https://github.com/Karthik0770/order-platform-config-repo` (public) and
+      pushed `config-repo`'s `master`. The submodule URL had been a dead link.
+- [x] Squashed `config-repo`'s 9 commits into one before the first push, because
+      `password: "root"` was in the earlier commits and scrubbing the working file does not
+      remove it from history. Tree hash unchanged (`1a75e83`) — content provably identical.
+      Passwords are now `${MYSQL_PASSWORD:root}` placeholders.
+- [x] Bumped the gitlink in the parent repo
+- [x] Committed Phase 0 in the parent repo and pushed (`0d5c315`)
+- [x] Verified a fresh `git clone --recurse-submodules` yields a populated `config-repo/`
+- [x] **Fixed the bug that verification exposed** — see below
 
-**Exit:** a clean `git status`, and a throwaway clone starts `config-service` successfully.
+**Unplanned but necessary.** The clone test failed its second half: `config-service` would
+not start from a clone, dying with
+`IllegalStateException: No .git directory at file:../config-repo`. Spring Cloud Config's git
+backend needs `.git` to be a real directory, and in a clone a submodule's `.git` is a
+redirect *file*. The original working copy hid this because its `config-repo/.git` is still
+a real directory from the pre-submodule layout, so the platform "worked on this machine"
+and nowhere else — and Phase 15 would have hit the same wall inside GKE.
+
+Fixed by pointing `config-service` at the **remote** repository via
+`${CONFIG_REPO_URI:https://github.com/Karthik0770/order-platform-config-repo.git}` with
+`clone-on-start: true`.
+
+**Exit:** met. `git status` clean; from a throwaway clone, `config-service` reports `UP` and
+serves populated `propertySources` for all four services on ports 8081/8082/8083/8080.
 
 ## Phase 1 — Inventory hardening *(parallel with Phase 2)*
 
