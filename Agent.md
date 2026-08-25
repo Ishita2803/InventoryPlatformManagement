@@ -382,6 +382,21 @@ Newest first. Add an entry for every meaningful change.
   unaffected. **A fresh clone will not inherit this** — re-run the two
   `git config --local user.*` commands after cloning, or commits silently revert to the
   global identity.
+- **Authoring and pushing are two different identities, and both had to change.** Setting
+  `user.email` only changes who the commit *says* wrote it; the push still used Windows
+  Credential Manager's cached `Karthik0770` token and was rejected with
+  `Permission to Ishita2803/... denied to Karthik0770`. Fixed by pointing
+  `credential.https://github.com.helper` at the GitHub CLI **in each repo's local config**:
+
+  ```
+  git config --local --add 'credential.https://github.com.helper' ''
+  git config --local --add 'credential.https://github.com.helper' '!"C:/Program Files/GitHub CLI/gh.exe" auth git-credential'
+  ```
+
+  The empty first value clears the inherited `manager` helper for this URL only. Doing this
+  globally, or via `gh auth setup-git`, would silently make **every** repo on the machine
+  push as whichever account `gh` last logged into. `gh` holds both accounts; `gh auth switch`
+  moves between them.
 - Updated in the same pass: `.gitmodules`, `CONFIG_REPO_URI` in `config-service`, and the URL
   references in this file and `plan.md`.
 - The old repositories under `Karthik0770` were **left in place**, not deleted. If only one
