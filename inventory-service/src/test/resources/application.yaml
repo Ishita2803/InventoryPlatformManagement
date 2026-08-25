@@ -27,6 +27,27 @@ spring:
       ddl-auto: create-drop
     database-platform: org.hibernate.dialect.H2Dialect
 
+  # Listeners are OFF by default so plain slice tests do not sit retrying a broker that is
+  # not there. The integration tests switch them back on and point at an embedded broker.
+  kafka:
+    bootstrap-servers: localhost:9092
+    listener:
+      auto-startup: false
+    admin:
+      # Without this, every @SpringBootTest spends ~45s watching KafkaAdmin retry the
+      # NewTopic beans against a broker that is not running. The integration tests get
+      # their topics from @EmbeddedKafka instead.
+      auto-create: false
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      properties:
+        spring.json.add.type.headers: false
+    consumer:
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+
 eureka:
   client:
     enabled: false

@@ -151,18 +151,38 @@ than sitting here untested.
 `total_amount=26.25`; both `order_item` rows carry the correct foreign key; `GET` by id →
 200; a negative line quantity → 400 naming `items[0].quantity`; an unknown id → 404.
 
-## Phase 3 — Kafka and the first async flow
+## Phase 3 — Kafka and the first async flow ✅ *(done 2026-08-26)*
 
-- [ ] `docker-compose.yml` — Kafka in **KRaft mode** (no ZooKeeper) plus both MySQL
-      schemas. Write it so the same file can later run on the GCP data VM.
-- [ ] Topics: `order.placed`, `inventory.reserved`, `inventory.failed`
-- [ ] Event **records**, defined separately from JPA entities, duplicated per service,
-      each carrying `eventId` for later idempotency
-- [ ] Order publishes `OrderPlaced` via `KafkaTemplate` (plain publish for now)
-- [ ] Inventory consumes, reserves, publishes `InventoryReserved` / `InventoryFailed`
-- [ ] Order consumes the result → `CONFIRMED` / `INVENTORY_FAILED`
+- [x] `docker-compose.yml` — Kafka in **KRaft mode** (no ZooKeeper) plus two *separate*
+      MySQL instances (3306 / 3307), parameterised so the same file runs on the GCP data VM.
+      ⚠ **Written but never executed** — Docker is not installed on this machine. Unverified.
+- [x] Topics: `order.placed`, `inventory.reserved`, `inventory.failed`, declared as
+      `NewTopic` beans rather than left to broker auto-creation
+- [x] Event **records**, separate from the JPA entities, duplicated per service, each
+      carrying `eventId` (unused until Phase 4, but present so no migration is needed then)
+- [x] Order publishes `OrderPlaced` via `KafkaTemplate`, keyed by `orderId`
+- [x] Inventory consumes, reserves, publishes `InventoryReserved` / `InventoryFailed`
+- [x] Order consumes the result and advances the order
 
-**Exit:** one `POST /api/orders` drives the full async round-trip; final status verified in MySQL.
+**Deviation from the original plan, deliberate.** This phase was written as
+"→ `CONFIRMED` / `INVENTORY_FAILED`", but `CONFIRMED` means *paid and shipped*, and payment
+does not exist until Phase 8. A reserved order therefore stops at `INVENTORY_RESERVED`,
+which is what the Phase 2 state machine allows: `PENDING → INVENTORY_RESERVED → CONFIRMED`.
+Jumping straight to `CONFIRMED` here would mean confirming orders nobody has paid for.
+
+**Also landed:** the order service was split into `OrderService` (publishes) and
+`OrderTxService` (`@Transactional`), so the event is published strictly *after* commit —
+publishing inside the transaction would let inventory reserve stock for an order that then
+rolls back. The remaining dual-write window is documented in the code and closed in Phase 5.
+
+**Exit:** met, verified against a **real broker and real MySQL**, not only in tests.
+`POST /api/orders` (qty 3, stock 10) → `PENDING` → `INVENTORY_RESERVED`, with a `RESERVED`
+row in `inventory_db.reservation` and stock at 7 available / 3 reserved
+(`version=1`, so exactly one update). A second order for qty 999 → `INVENTORY_FAILED`
+with **no** reservation row and stock untouched.
+
+Automated proof: 8 integration tests against an embedded broker (4 per service), covering
+publish, both result paths, partial-order compensation, and duplicate delivery.
 
 ## Phase 4 — Saga correctness
 

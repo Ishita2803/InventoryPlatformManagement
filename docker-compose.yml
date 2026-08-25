@@ -1,0 +1,106 @@
+# Backing infrastructure for local development: Kafka plus the two MySQL schemas.
+#
+# Scope: this file runs the STATEFUL dependencies only, not the Spring services. Those are
+# still run from the IDE or `./mvnw spring-boot:run`, which keeps the edit/restart loop fast.
+# Phase 9 adds Dockerfiles and a compose profile that runs the services too.
+#
+# This is also the file Phase 13 lifts onto the GCP data VM more or less unchanged, which is
+# why the two things it will need there — an externally reachable advertised listener, and
+# heap limits sized for a 4 GB box — are already parameterised rather than hardcoded.
+#
+#   docker compose up -d
+#   docker compose down          # keeps volumes
+#   docker compose down -v       # destroys the data too
+#
+# STATUS: written but NOT YET RUN. Docker is not installed on the development machine as of
+# 2026-08-26, so this has not been executed even once. Treat it as unverified until it has.
+
+services:
+
+  kafka:
+    image: apache/kafka:3.9.0
+    container_name: kafka
+    ports:
+      - "9092:9092"
+    environment:
+      # KRaft: no ZooKeeper. A single node is both broker and controller.
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+
+      # The address handed BACK to clients after they connect. A client connects to
+      # whatever is here, so if this says "localhost" and the client is not on this host,
+      # the connection succeeds and every subsequent produce/fetch fails with a timeout
+      # that looks like a network fault. On the GCP VM this becomes the VM's internal IP.
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://${KAFKA_ADVERTISED_HOST:-localhost}:9092
+
+      # Single broker, so nothing can be replicated more than once. Left at the default of
+      # 3, the first consumer group would fail to create its offsets topic.
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+
+      # Sized for a shared 4 GB VM rather than a dedicated machine.
+      KAFKA_HEAP_OPTS: ${KAFKA_HEAP_OPTS:--Xms512m -Xmx768m}
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+
+  order-mysql:
+    image: mysql:8.0
+    container_name: order-mysql
+    ports:
+      - "3306:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root}
+      MYSQL_DATABASE: order_db
+    command:
+      # The default buffer pool assumes the box is yours alone. Two MySQLs and a Kafka on
+      # one 4 GB VM is the situation Phase 13 puts them in.
+      - --innodb-buffer-pool-size=${MYSQL_BUFFER_POOL:-384M}
+    volumes:
+      - order-mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-p${MYSQL_ROOT_PASSWORD:-root}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  # A genuinely separate instance, not a second schema on the first. Two services sharing
+  # one database is the thing microservices are supposed to avoid, and running them apart
+  # locally means nobody can accidentally write a cross-schema join that works in dev and
+  # is impossible in production.
+  inventory-mysql:
+    image: mysql:8.0
+    container_name: inventory-mysql
+    ports:
+      - "3307:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root}
+      MYSQL_DATABASE: inventory_db
+    command:
+      - --innodb-buffer-pool-size=${MYSQL_BUFFER_POOL:-384M}
+    volumes:
+      - inventory-mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-p${MYSQL_ROOT_PASSWORD:-root}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+volumes:
+  kafka-data:
+  order-mysql-data:
+  inventory-mysql-data:

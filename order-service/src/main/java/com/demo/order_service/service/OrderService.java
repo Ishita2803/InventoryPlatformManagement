@@ -2,83 +2,62 @@ package com.demo.order_service.service;
 
 import com.demo.order_service.dto.CreateOrderRequest;
 import com.demo.order_service.dto.OrderResponse;
-import com.demo.order_service.exception.OrderNotFoundException;
-import com.demo.order_service.mapper.OrderMapper;
-import com.demo.order_service.models.Order;
+import com.demo.order_service.kafka.OrderEventPublisher;
 import com.demo.order_service.models.OrderStatus;
-import com.demo.order_service.repository.OrderRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 
+/**
+ * The public API of the order domain.
+ *
+ * <p>Not transactional itself: it commits the order through {@link OrderTxService} and only
+ * then publishes, so Kafka never learns about an order the database rolled back.
+ */
 @Service
 @RequiredArgsConstructor
 @Slf4j
 public class OrderService {
 
-    private final OrderRepository orderRepository;
-    private final OrderMapper orderMapper;
+    private final OrderTxService tx;
+    private final OrderEventPublisher publisher;
 
     /**
-     * Persists a new order as {@link OrderStatus#PENDING}.
+     * Persists the order as {@code PENDING}, then announces it.
      *
-     * <p>Deliberately makes <em>no</em> call to inventory-service. Checking stock
-     * synchronously here would put an order's acceptance at the mercy of another service
-     * being up, which is exactly the coupling the event-driven design exists to remove.
-     * Phase 3 publishes {@code OrderPlaced} and lets inventory answer asynchronously; until
-     * then, PENDING is simply where orders stop.
+     * <p><strong>This is a dual write, and it is knowingly unsafe.</strong> The commit and
+     * the publish are two separate operations with no shared transaction: if the process
+     * dies between them, or the broker is unreachable, the order exists in MySQL as PENDING
+     * and no consumer ever hears about it. It will sit there forever.
+     *
+     * <p>The window is deliberately left open in this phase rather than papered over with a
+     * retry that would only narrow it. Phase 5's transactional outbox closes it properly, by
+     * writing the event to the same database in the same transaction as the order and
+     * draining it to Kafka afterwards.
+     *
+     * <p>Ordering the operations the other way round — publish, then commit — would be
+     * strictly worse: inventory could reserve stock for an order that never came to exist.
      */
-    @Transactional
     public OrderResponse createOrder(CreateOrderRequest request) {
 
-        Order order = orderMapper.toNewOrder(request);
-        Order saved = orderRepository.save(order);
+        OrderResponse response = tx.create(request);
+        publisher.publishOrderPlaced(response);
 
-        log.info("Created order {} for customer {} with {} item(s), total {}",
-                saved.getOrderId(), saved.getCustomerId(),
-                saved.getItems().size(), saved.getTotalAmount());
-
-        return orderMapper.toResponse(saved);
+        return response;
     }
 
-    @Transactional(readOnly = true)
     public OrderResponse getOrder(String orderId) {
-        return orderMapper.toResponse(loadOrder(orderId));
+        return tx.getOrder(orderId);
     }
 
-    @Transactional(readOnly = true)
     public List<OrderResponse> listOrders(Pageable pageable) {
-        return orderRepository.findAllBy(pageable)
-                .map(orderMapper::toResponse)
-                .getContent();
+        return tx.listOrders(pageable);
     }
 
-    /**
-     * Moves an order through its lifecycle, refusing illegal transitions.
-     *
-     * <p>Not reachable over HTTP yet -- nothing should be able to force an order into
-     * CONFIRMED from outside. It exists for the Kafka consumers in Phase 3, which is why it
-     * is tested now rather than written later.
-     */
-    @Transactional
     public OrderResponse transitionOrder(String orderId, OrderStatus target) {
-
-        Order order = loadOrder(orderId);
-        order.transitionTo(target);
-
-        log.info("Order {} moved to {}", orderId, target);
-
-        return orderMapper.toResponse(order);
-    }
-
-    private Order loadOrder(String orderId) {
-        return orderRepository.findByOrderId(orderId)
-                .orElseThrow(() -> new OrderNotFoundException(
-                        "Order not found: " + orderId
-                ));
+        return tx.transitionOrder(orderId, target);
     }
 }

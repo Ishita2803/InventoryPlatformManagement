@@ -62,14 +62,14 @@ not feature count or delivery speed. Concretely:
 | Framework | Spring Boot **4.1.0** |
 | Cloud libs | Spring Cloud **2025.1.2** |
 | Persistence | MySQL + Spring Data JPA |
-| Messaging | Apache Kafka *(not yet wired)* |
+| Messaging | Apache Kafka **(KRaft, wired end-to-end)** |
 | Discovery | Eureka — **local only**, dropped on GKE (see §7) |
 | Config | Spring Cloud Config, git backend |
 | Gateway | Spring Cloud Gateway **MVC** (`spring-cloud-starter-gateway-server-webmvc`) |
 | Resilience | Resilience4j *(dependency present, unused)* |
 | Build | Maven (wrapper per module; there is **no parent aggregator pom**) |
 | Boilerplate | Lombok |
-| Container | Docker, multi-stage *(not yet written)* |
+| Container | Docker *(compose file written, never run — no Docker installed)* |
 | Orchestration | GKE Standard, zonal, Spot nodes *(not yet created)* |
 | Secrets | GCP Secret Manager via CSI driver *(not yet created)* |
 
@@ -93,7 +93,7 @@ aggregator pom, so "build everything" means looping over modules.
 | `notification-service` | 8083 | Consumes events, mock email | yes | yes |
 | `payment-service` | tbd | Mocked, synchronous — Resilience4j's target | planned | yes |
 | MySQL | 3306 | **both** schemas on one instance | — | on the data VM |
-| Kafka | 9092 | not yet running | — | on the data VM |
+| Kafka | 9092 | `order.placed`, `inventory.reserved`, `inventory.failed` | — | on the data VM |
 
 Note `discovery-service`'s application name is `discovery-server`, which does **not** match
 its directory name. That is deliberate but easy to trip over.
@@ -110,6 +110,7 @@ InventoryPlatformManagement/          <- git root
 ├── README.md                         <- still a stub (Phase 11)
 ├── .gitignore
 ├── .gitmodules
+├── docker-compose.yml             <- Kafka + 2x MySQL. UNVERIFIED: never executed
 ├── .run/                             <- SHARED IntelliJ run configs (committed on purpose)
 │   └── config-service.run.xml
 ├── config-repo/                      <- GIT SUBMODULE (see §6)
@@ -126,7 +127,7 @@ InventoryPlatformManagement/          <- git root
 ```
 
 Planned but not yet created: `payment-service/`, `deploy/k8s/`, `deploy/gcp/`,
-`docs/decisions/`, `docker-compose.yml`.
+`docs/decisions/`. `docker-compose.yml` now exists at the root but has never been run.
 
 Java packages are `com.demo.<service_name>` with **underscores**
 (e.g. `com.demo.inventory_service`), not the `com.karthik.*` used in the source PDF.
@@ -138,7 +139,7 @@ Entities live in a `models` package, not `entity`.
 
 *Update this section with every change.*
 
-### `inventory-service` — Phase 1 complete
+### `inventory-service` — Phases 1 and 3 complete
 - `models/Product` — `id`, `sku` (unique), `name`
 - `models/Inventory` — `id`, `productId`, `warehouseId`, `availableQuantity`,
   `reservedQuantity`, `@Version version`
@@ -166,8 +167,14 @@ Entities live in a `models` package, not `entity`.
   `POST /inventory/reserve`, `POST /inventory/release`, `POST /inventory/confirm`
 - **23 tests, all green.** Business rules (Mockito), retry policy (Mockito), HTTP contract
   (`@WebMvcTest`), and real concurrency against H2 (`@DataJpaTest`).
+- **Phase 3:** `events/` holds `OrderPlacedEvent` (consumed), `InventoryReservedEvent` and
+  `InventoryFailedEvent` (produced), plus `KafkaTopics` — all duplicated from order-service.
+  `kafka/OrderPlacedListener` reserves every line, and on failure **releases whatever it
+  already reserved** before publishing `InventoryFailed`. `config/KafkaConfig` declares the
+  two result topics and the `StringJsonMessageConverter`.
+- **27 tests** (23 unit + 4 integration under `./mvnw verify`).
 
-### `order-service` — Phase 2 complete
+### `order-service` — Phases 2 and 3 complete
 - `models/Order` — surrogate `id`, plus **`orderId` (String UUID, unique)** as the public
   cross-service identifier. Table is **`orders`**, not `order` (see §8). `customerId`,
   `status`, `totalAmount` (`BigDecimal(19,2)`), `items`, `createdAt`, `updatedAt`.
@@ -194,7 +201,13 @@ Entities live in a `models` package, not `entity`.
   `GET /api/orders?page=&size=` (paged, size capped at 100)
 - `GlobalExceptionHandler` — `OrderNotFound` → 404,
   `InvalidOrderStateTransition` → 409, `@Valid` → 400 with nested field paths
-- **25 tests, all green**, plus verified end-to-end against real MySQL.
+- **Phase 3:** `events/` holds `OrderPlacedEvent` (produced), `InventoryReservedEvent` and
+  `InventoryFailedEvent` (consumed), plus `KafkaTopics`. `kafka/OrderEventPublisher` sends
+  `OrderPlaced` keyed by `orderId`; `kafka/InventoryResultListener` applies the answer and
+  tolerates redelivery. **`OrderService` no longer holds the transaction** — `OrderTxService`
+  does, so the event is published only after commit.
+- **32 tests** (28 unit + 4 integration under `./mvnw verify`), plus verified end-to-end
+  against a real broker and real MySQL.
 - Kafka and Resilience4j are on the classpath but still unused — Phases 3 and 8.
 
 ### `notification-service`, `api-gateway-service` — skeletons
@@ -315,29 +328,49 @@ Ordered roughly by how much time each one costs when forgotten.
    Letting Hibernate derive the name emits `create table order (...)`, which MySQL rejects
    with a syntax error pointing at the wrong token entirely. `OrderPersistenceTest` is what
    would catch a regression here.
-7. **Spring Boot 4 moved the test-slice annotations.** They are no longer under
+7. **Never let the Kafka producer stamp Java type headers.** Event classes are duplicated
+   per service, so `spring.json.add.type.headers` must stay `false`. Left on, the producer
+   writes `__TypeId__: com.demo.order_service.events.OrderPlacedEvent`, and the consumer —
+   which only has `com.demo.inventory_service.events.OrderPlacedEvent` — fails to
+   deserialize every single message. Consumers use `StringDeserializer` plus a
+   `StringJsonMessageConverter` bean, which takes the target type from the
+   `@KafkaListener` method parameter instead.
+8. **`*IT` classes do not run under `./mvnw test`.** Surefire only picks up `*Test`,
+   `Test*`, `*Tests`, `*TestCase`. The integration tests are named `*IT` and run under
+   **`./mvnw verify`** via failsafe. A green `test` run therefore proves *less* than it
+   looks — check which plugin actually executed.
+9. **Tests must set `spring.kafka.admin.auto-create: false`.** Otherwise every
+   `@SpringBootTest` spends ~45 s watching `KafkaAdmin` retry the `NewTopic` beans against
+   a broker that is not running. It is not a failure, just a silent 10x slowdown.
+10. **Running Kafka on Windows without Docker:** the `bin/windows/*.bat` scripts die with
+    *"The input line is too long"* — the expanded classpath exceeds cmd's 8191-char limit
+    under any deep path. Bypass them and let the JVM expand the wildcard itself:
+    `java -cp "<kafka>/libs/*" kafka.Kafka <config>` (and `kafka.tools.StorageTool` to
+    format KRaft storage first). Also avoid passing `-Dlog4j.configuration=` through
+    PowerShell, which mangles it.
+11. **Spring Boot 4 moved the test-slice annotations.** They are no longer under
    `org.springframework.boot.test.autoconfigure.*`:
    - `@DataJpaTest` → `org.springframework.boot.data.jpa.test.autoconfigure`
    - `@WebMvcTest` → `org.springframework.boot.webmvc.test.autoconfigure`
 
    Every tutorial online still shows the Boot 3 packages, so the import will look right and
    fail to resolve. `@MockitoBean` (not `@MockBean`) is likewise the current spelling.
-8. **DB passwords are `${MYSQL_PASSWORD:root}` placeholders — keep them that way.**
+12. **DB passwords are `${MYSQL_PASSWORD:root}` placeholders — keep them that way.**
    `config-repo/order-service.yaml` and `inventory-service.yaml` previously carried
    `password: "root"` in plaintext. Fixed 2026-08-25, and `config-repo`'s history was
    squashed to one commit before its first push, so the literal credential never reached
    GitHub at all. The `:root` default means local runs still need no env var. **Do not
    reintroduce a literal password** — `config-repo` is public, and history is forever once
    pushed. Phase 14 replaces the default with Secret Manager.
-9. **`java` on PATH is Java 8.** Use JDK 21: `JAVA_HOME=C:\Users\Karthik\.jdks\ms-21.0.12`.
+13. **`java` on PATH is Java 8.** Use JDK 21: `JAVA_HOME=C:\Users\Karthik\.jdks\ms-21.0.12`.
    `mvn` is not on PATH at all — use each module's `./mvnw`.
-10. **Both DBs share `localhost:3306`.** The design called for 3306/3307. Fine locally;
+14. **Both DBs share `localhost:3306`.** The design called for 3306/3307. Fine locally;
    Compose and the GCP data VM will split the schemas properly. Be honest about this.
-11. **Eureka registration lags roughly 40 s after boot** (client replication interval). An
+15. **Eureka registration lags roughly 40 s after boot** (client replication interval). An
     empty `/eureka/apps` immediately after startup is normal, not a failure.
-12. Maven needs network on first run — don't pass `-o`.
-13. `.idea/` is intentionally untracked; `.run/` is intentionally tracked.
-14. **The local toolchain for Part B does not exist yet.** No `gcloud`, `kubectl`, `docker`,
+16. Maven needs network on first run — don't pass `-o`.
+17. `.idea/` is intentionally untracked; `.run/` is intentionally tracked.
+18. **The local toolchain for Part B does not exist yet.** No `gcloud`, `kubectl`, `docker`,
     `helm` or `terraform` on this machine. Phase 12 installs them.
 
 ---
@@ -370,6 +403,33 @@ A 200 with **empty** `propertySources` means the filename doesn't match
 ## 10. Change log
 
 Newest first. Add an entry for every meaningful change.
+
+### 2026-08-26 — Phase 3 complete: the first async flow
+- `POST /api/orders` now drives a real round trip. Order publishes `OrderPlaced`; inventory
+  reserves and answers `InventoryReserved` / `InventoryFailed`; order applies the result.
+- **Event records are duplicated per service** and **type headers are disabled on the
+  producer**. Those two decisions are linked: with duplicated classes the producer's
+  `__TypeId__` would name a class the consumer cannot load, so the wire format is plain
+  JSON and the target type comes from the `@KafkaListener` method signature via
+  `StringJsonMessageConverter`.
+- Events are **keyed by `orderId`** so everything about one order stays on one partition
+  and therefore stays ordered.
+- **Order service split** into `OrderService` (publishes) and `OrderTxService`
+  (`@Transactional`), so publishing happens strictly after commit. The remaining dual-write
+  window is documented in `OrderService.createOrder` and closed by Phase 5's outbox.
+- Inventory **compensates partial orders**: if line 3 has no stock, lines 1 and 2 are
+  released before `InventoryFailed` goes out, so nothing is leaked.
+- Duplicate `InventoryReserved` is tolerated: the listener swallows the lifecycle guard's
+  exception rather than rethrowing, which would retry forever and stall the partition. This
+  is duplicate *tolerance*, not idempotency — Phase 4 adds `processed_events`.
+- **Deviation:** a reserved order stops at `INVENTORY_RESERVED`, not `CONFIRMED`. `CONFIRMED`
+  means paid, and payment arrives in Phase 8. See `plan.md` Phase 3.
+- Added `maven-failsafe-plugin` to both services: `*IT` classes are integration tests and
+  run under `./mvnw verify`, not `./mvnw test`.
+- **Verified against a real broker and real MySQL**, not only tests — see `plan.md` Phase 3
+  for the observed values. Kafka 3.9 was downloaded, run standalone, used, and removed;
+  nothing was left installed.
+- `docker-compose.yml` added but **never executed** (no Docker on this machine).
 
 ### 2026-08-25 — Moved to the `Ishita2803` GitHub account
 - Both repositories now live under **`github.com/Ishita2803/`**, and all commits are authored
