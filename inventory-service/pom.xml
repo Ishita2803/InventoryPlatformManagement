@@ -69,6 +69,20 @@
 			<artifactId>mysql-connector-j</artifactId>
 			<scope>runtime</scope>
 		</dependency>
+
+		<!--
+		  In-memory database for tests. Needed specifically so the concurrency test can
+		  exercise a REAL @Version optimistic-locking race: Mockito can assert that we call
+		  the repository, but it cannot prove that two concurrent transactions fail to
+		  oversell. Hibernate issues the same "UPDATE ... WHERE version = ?" against H2 as
+		  against MySQL, so the locking behaviour under test is identical.
+		  Phase 10 adds Testcontainers for genuine MySQL integration coverage on top of this.
+		-->
+		<dependency>
+			<groupId>com.h2database</groupId>
+			<artifactId>h2</artifactId>
+			<scope>test</scope>
+		</dependency>
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-actuator-test</artifactId>

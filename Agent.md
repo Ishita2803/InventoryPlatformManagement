@@ -138,21 +138,34 @@ Entities live in a `models` package, not `entity`.
 
 *Update this section with every change.*
 
-### `inventory-service` — furthest along
+### `inventory-service` — Phase 1 complete
 - `models/Product` — `id`, `sku` (unique), `name`
 - `models/Inventory` — `id`, `productId`, `warehouseId`, `availableQuantity`,
   `reservedQuantity`, `@Version version`
-- `ProductRepository.findBySku`, `InventoryRepository.findByProductIdAndWarehouseId`
-- DTOs: `ProductRequest`, `InventoryRequest`, `InventoryResponse`, `ReserveInventoryRequest`
-- `InventoryService`: `createProduct`, `addInventory`, `getInventory`, `reserveInventory`,
-  `releaseInventory` — all `@Transactional`
-- `GlobalExceptionHandler`: `InventoryNotFoundException` → 404,
-  `InsufficientInventoryException` → 409
+- **`models/Reservation`** — `orderId` (String/UUID), `productId`, `warehouseId`, `quantity`,
+  `status`, `createdAt`, `updatedAt`, with a unique constraint on
+  `(order_id, product_id, warehouse_id)`. That constraint **is** the idempotency key.
+- `models/ReservationStatus` — `RESERVED` / `RELEASED` / `CONFIRMED`; the latter two terminal
+- Repositories: `ProductRepository.findBySku`,
+  `InventoryRepository.findByProductIdAndWarehouseId`, `ReservationRepository`
+  (`findByOrderIdAndProductIdAndWarehouseId`, `findByOrderId`, `findByOrderIdAndStatus`)
+- DTOs: `ProductRequest`, `InventoryRequest`, `InventoryResponse`,
+  `ReserveInventoryRequest` (now carries `orderId`), `OrderReferenceRequest`
+- **Two service beans, deliberately** — `InventoryService` (public API + bounded
+  optimistic-lock retry, *not* transactional) delegating to `InventoryTxService`
+  (`@Transactional` units). Retry must wrap the whole transaction, and a same-bean call
+  would bypass the Spring proxy and silently run with no transaction at all.
+- Reserve is **idempotent**: an existing reservation for the same
+  (orderId, productId, warehouseId) is a no-op that reports current stock.
+  Release and confirm are **order-scoped** — they act on every line the order holds.
+- `GlobalExceptionHandler`: `InventoryNotFound` / `ProductNotFound` → 404;
+  `InsufficientInventory` / `DuplicateSku` / `ReservationConflict` /
+  `ObjectOptimisticLockingFailure` → 409; `MethodArgumentNotValid` → 400 with per-field
+  errors; `IllegalArgument` → 400
 - Endpoints under `/api`: `POST /products`, `POST /inventory`, `GET /inventory`,
-  `POST /inventory/reserve`, `POST /inventory/release`
-- **Known rough edges:** `createProduct` / `addInventory` / `getInventory` still throw bare
-  `RuntimeException`, so those paths return 500 rather than a typed status.
-  `releaseInventory` throws `IllegalArgumentException`, also unmapped.
+  `POST /inventory/reserve`, `POST /inventory/release`, `POST /inventory/confirm`
+- **23 tests, all green.** Business rules (Mockito), retry policy (Mockito), HTTP contract
+  (`@WebMvcTest`), and real concurrency against H2 (`@DataJpaTest`).
 
 ### `order-service` — **skeleton only**
 Application class with `@EnableDiscoveryClient` plus a config-client `application.yaml`.
@@ -269,15 +282,17 @@ Ordered roughly by how much time each one costs when forgotten.
 4. **Config Server reads pushed state only.** Now that the URI is remote, a config change
    must be committed **and pushed** before Config Server sees it — committing alone is no
    longer enough. See §6.
-5. **Reservations have no `orderId`.** `reserveInventory(productId, warehouseId, quantity)`
-   is quantity-only. The moment Kafka delivers `OrderPlaced` twice — and at-least-once is
-   the default — this double-reserves, and there is no way to release everything belonging
-   to one order. **Fix this before Kafka** (`plan.md` Phase 1). Afterwards it is not an
-   entity addition, it is a consumer rewrite.
-6. **`@Version` on `Inventory` has no landing pad.** `ObjectOptimisticLockingFailureException`
-   is unhandled and unretried, so a lost race returns 500 instead of 409.
-   `MethodArgumentNotValidException` is also unhandled, so `@Valid` messages never reach
-   clients cleanly. Both are Phase 1 work.
+5. **`orderId` is a `String` (UUID), never a `Long`.** It is a cross-service identifier that
+   travels inside Kafka events, so it must not be order-service's auto-increment surrogate
+   key. Phase 2's `Order` entity must therefore expose a UUID business identifier, whatever
+   it uses as its own primary key. Decided 2026-08-25 when `Reservation` was built.
+6. **Spring Boot 4 moved the test-slice annotations.** They are no longer under
+   `org.springframework.boot.test.autoconfigure.*`:
+   - `@DataJpaTest` → `org.springframework.boot.data.jpa.test.autoconfigure`
+   - `@WebMvcTest` → `org.springframework.boot.webmvc.test.autoconfigure`
+
+   Every tutorial online still shows the Boot 3 packages, so the import will look right and
+   fail to resolve. `@MockitoBean` (not `@MockBean`) is likewise the current spelling.
 7. **DB passwords are `${MYSQL_PASSWORD:root}` placeholders — keep them that way.**
    `config-repo/order-service.yaml` and `inventory-service.yaml` previously carried
    `password: "root"` in plaintext. Fixed 2026-08-25, and `config-repo`'s history was
@@ -326,6 +341,35 @@ A 200 with **empty** `propertySources` means the filename doesn't match
 ## 10. Change log
 
 Newest first. Add an entry for every meaningful change.
+
+### 2026-08-25 — Phase 1 complete: order-scoped reservations, and proof they hold
+- **Added the `Reservation` entity**, the highest-leverage change in the project. Reserve and
+  release are now keyed by `orderId` instead of being quantity-only, which is what makes an
+  idempotent Kafka consumer and Saga compensation possible at all.
+- Idempotency is enforced by a **database unique constraint** on
+  `(order_id, product_id, warehouse_id)`, not by an application-level "does it exist?" check
+  — two concurrent consumers can both pass such a check.
+- **Split the service into two beans.** `InventoryService` holds a bounded
+  (4-attempt, jittered-backoff) optimistic-lock retry; `InventoryTxService` holds the
+  `@Transactional` units. The retry has to wrap the whole transaction, and Spring's proxy
+  means a same-bean call would have silently run with no transaction at all.
+- Added `confirmByOrderId` so `CONFIRMED` is a real state, not a dead enum value: it drops
+  reserved stock **without** returning it to available, which is the difference between a
+  shipment and a cancellation.
+- Replaced the bare `RuntimeException`s with `ProductNotFoundException` and
+  `DuplicateSkuException`; added `ReservationConflictException`. Exhausted retries and
+  optimistic-lock failures are now **409, not 500** — contention is a normal outcome, not a
+  server fault. `@Valid` failures are 400 with per-field messages.
+- **23 tests, all green**, including a real-concurrency test on H2 (Mockito cannot lose a
+  race, so it cannot prove this property).
+- **Verified the concurrency test can actually fail.** Temporarily removed `@Version` and
+  re-ran it: all 10 threads reported success, implying 20 units reserved, while only **2**
+  were actually deducted — a textbook lost update. The test caught it and failed; `@Version`
+  was then restored and the suite re-run green. A concurrency test that has never been seen
+  to fail is not evidence of anything.
+- Added H2 as a **test-scoped** dependency, and `src/test/resources/application.yaml` which
+  shadows the main config so tests no longer require Config Server and MySQL to be running.
+  `contextLoads` genuinely passes now rather than being aspirational.
 
 ### 2026-08-25 — Phase 0.5 complete: the platform now actually runs from a clone
 - **Found and fixed a bug that made the project unusable for anyone who cloned it.**

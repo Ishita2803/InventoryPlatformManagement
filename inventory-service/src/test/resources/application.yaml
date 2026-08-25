@@ -1,0 +1,34 @@
+# Test configuration.
+#
+# This file SHADOWS src/main/resources/application.yaml, because the test classpath comes
+# first. That is the point: the main file carries a non-optional
+# `spring.config.import: configserver:http://localhost:8888`, so without this shadow every
+# test would fail unless Config Server and MySQL happened to be running on the developer's
+# machine. Tests must not depend on external infrastructure.
+
+spring:
+  application:
+    name: inventory-service
+
+  cloud:
+    config:
+      enabled: false
+    discovery:
+      enabled: false
+
+  datasource:
+    url: jdbc:h2:mem:inventory;DB_CLOSE_DELAY=-1;MODE=MySQL
+    driver-class-name: org.h2.Driver
+    username: sa
+    password: ""
+
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+    database-platform: org.hibernate.dialect.H2Dialect
+
+eureka:
+  client:
+    enabled: false
+    register-with-eureka: false
+    fetch-registry: false

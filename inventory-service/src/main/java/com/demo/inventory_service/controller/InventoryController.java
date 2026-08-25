@@ -2,6 +2,7 @@ package com.demo.inventory_service.controller;
 
 import com.demo.inventory_service.dto.InventoryRequest;
 import com.demo.inventory_service.dto.InventoryResponse;
+import com.demo.inventory_service.dto.OrderReferenceRequest;
 import com.demo.inventory_service.dto.ProductRequest;
 import com.demo.inventory_service.dto.ReserveInventoryRequest;
 import com.demo.inventory_service.models.Product;
@@ -11,6 +12,8 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
 
 @RestController
 @RequestMapping("/api")
@@ -36,8 +39,7 @@ public class InventoryController {
             @Valid @RequestBody InventoryRequest request
     ) {
 
-        InventoryResponse response =
-                inventoryService.addInventory(request);
+        InventoryResponse response = inventoryService.addInventory(request);
 
         return ResponseEntity
                 .status(HttpStatus.CREATED)
@@ -51,40 +53,47 @@ public class InventoryController {
     ) {
 
         return ResponseEntity.ok(
-                inventoryService.getInventory(
-                        productId,
-                        warehouseId
-                )
+                inventoryService.getInventory(productId, warehouseId)
         );
     }
 
+    /**
+     * Reserve stock for one order line. Safe to call repeatedly with the same orderId:
+     * the reservation is created at most once.
+     */
     @PostMapping("/inventory/reserve")
     public ResponseEntity<InventoryResponse> reserveInventory(
             @Valid @RequestBody ReserveInventoryRequest request
     ) {
 
-        InventoryResponse response =
-                inventoryService.reserveInventory(
-                        request.getProductId(),
-                        request.getWarehouseId(),
-                        request.getQuantity()
-                );
-
-        return ResponseEntity.ok(response);
+        return ResponseEntity.ok(inventoryService.reserveInventory(request));
     }
 
+    /**
+     * Saga compensation: release every reservation held by this order. Returns one entry per
+     * stock row actually released, so an empty list means there was nothing left to undo.
+     */
     @PostMapping("/inventory/release")
-    public ResponseEntity<InventoryResponse> releaseInventory(
-            @Valid @RequestBody ReserveInventoryRequest request
+    public ResponseEntity<List<InventoryResponse>> releaseInventory(
+            @Valid @RequestBody OrderReferenceRequest request
     ) {
 
-        InventoryResponse response =
-                inventoryService.releaseInventory(
-                        request.getProductId(),
-                        request.getWarehouseId(),
-                        request.getQuantity()
-                );
+        return ResponseEntity.ok(
+                inventoryService.releaseInventory(request.getOrderId())
+        );
+    }
 
-        return ResponseEntity.ok(response);
+    /**
+     * The order shipped: reserved stock leaves the warehouse permanently rather than
+     * returning to available.
+     */
+    @PostMapping("/inventory/confirm")
+    public ResponseEntity<List<InventoryResponse>> confirmReservation(
+            @Valid @RequestBody OrderReferenceRequest request
+    ) {
+
+        return ResponseEntity.ok(
+                inventoryService.confirmReservation(request.getOrderId())
+        );
     }
 }

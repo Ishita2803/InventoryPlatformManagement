@@ -8,13 +8,20 @@ import lombok.Data;
 @Data
 public class ReserveInventoryRequest {
 
-    @NotNull
+    /**
+     * Idempotency key. Two requests carrying the same orderId for the same product and
+     * warehouse reserve stock exactly once, however many times they arrive.
+     */
+    @NotBlank(message = "Order ID is required")
+    private String orderId;
+
+    @NotNull(message = "Product ID is required")
     private Long productId;
 
-    @NotBlank
+    @NotBlank(message = "Warehouse ID is required")
     private String warehouseId;
 
-    @NotNull
+    @NotNull(message = "Quantity is required")
     @Min(value = 1, message = "Quantity must be at least 1")
     private Integer quantity;
 }

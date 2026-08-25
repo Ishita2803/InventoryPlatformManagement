@@ -96,29 +96,42 @@ Fixed by pointing `config-service` at the **remote** repository via
 **Exit:** met. `git status` clean; from a throwaway clone, `config-service` reports `UP` and
 serves populated `propertySources` for all four services on ports 8081/8082/8083/8080.
 
-## Phase 1 — Inventory hardening *(parallel with Phase 2)*
+## Phase 1 — Inventory hardening ✅ *(done 2026-08-25)*
 
 The source conversation is explicit that reservation must be correct **before** Kafka arrives.
 
-- [ ] **`Reservation` entity** — `orderId`, `productId`, `warehouseId`, `quantity`,
-      `status` (`RESERVED` / `RELEASED` / `CONFIRMED`), unique constraint on
-      `(orderId, productId, warehouseId)`. Reserve and release become *order-scoped*
-      rather than quantity-only.
-      *This is the highest-leverage change in the project.* Without `orderId` there is no
-      way to make the Kafka consumer idempotent, and no way to release everything
-      belonging to one order during Saga compensation.
-- [ ] Optimistic-lock retry around reserve; map `ObjectOptimisticLockingFailureException`
-      to **409**, not a 500 stack trace
-- [ ] Handle `MethodArgumentNotValidException` → **400** with field errors
-- [ ] Replace the bare `RuntimeException`s in `InventoryService.createProduct`,
-      `addInventory` and `getInventory` with typed exceptions the handler already knows
-- [ ] Unit tests (JUnit 5 + Mockito): sufficient stock succeeds · insufficient stock
-      rejected · release restores stock · negative quantity rejected · unknown
-      product/inventory errors cleanly · **concurrent reservations do not oversell**
+- [x] **`Reservation` entity** — `orderId` (String/UUID), `productId`, `warehouseId`,
+      `quantity`, `status` (`RESERVED` / `RELEASED` / `CONFIRMED`), unique constraint on
+      `(order_id, product_id, warehouse_id)`. Reserve and release are now *order-scoped*.
+- [x] Optimistic-lock retry around reserve (4 attempts, jittered backoff), and
+      `ObjectOptimisticLockingFailureException` maps to **409**, not a 500 stack trace
+- [x] `MethodArgumentNotValidException` → **400** with per-field errors
+- [x] Bare `RuntimeException`s replaced with `ProductNotFoundException` and
+      `DuplicateSkuException`; added `ReservationConflictException`
+- [x] `confirmByOrderId` added so `CONFIRMED` is a real state rather than a dead enum value
+- [x] 23 tests: sufficient stock succeeds · insufficient stock rejected · release restores
+      stock · negative quantity rejected · unknown product/inventory errors cleanly ·
+      redelivery reserves exactly once · **concurrent reservations do not oversell**
 
-**Exit:** all tests green, and the concurrency test demonstrably prevents overselling.
+**Beyond the original scope, and worth knowing:**
+- The service was split into `InventoryService` (retry, non-transactional) and
+  `InventoryTxService` (`@Transactional`). Retry must wrap the whole transaction, and
+  Spring's proxying means a same-bean call would have run with **no transaction at all**.
+- H2 was added as a test-scoped dependency, plus `src/test/resources/application.yaml`,
+  so the suite no longer needs Config Server and MySQL running. Phase 10 still adds
+  Testcontainers for genuine MySQL coverage.
+
+**Exit:** met. All 23 tests green. The concurrency test was additionally **mutation-checked**
+— removing `@Version` makes it fail with a classic lost update (10 threads all report
+success while only 2 units are deducted), proving the test can actually detect overselling
+rather than passing vacuously.
 
 ## Phase 2 — Order domain *(parallel with Phase 1)*
+
+> **Constraint inherited from Phase 1:** `Reservation.orderId` is a **String UUID**, because
+> a cross-service identifier travelling in Kafka events must not be another service's
+> auto-increment surrogate key. `Order` must therefore expose a UUID business identifier,
+> whatever it uses as its own primary key.
 
 - [ ] `Order`, `OrderItem`, `OrderStatus` (`PENDING`, `INVENTORY_RESERVED`,
       `INVENTORY_FAILED`, `CONFIRMED`, `CANCELLED`)
