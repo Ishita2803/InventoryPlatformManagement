@@ -3,12 +3,10 @@ package com.demo.order_service.service;
 import com.demo.order_service.dto.CreateOrderRequest;
 import com.demo.order_service.dto.OrderItemResponse;
 import com.demo.order_service.dto.OrderResponse;
-import com.demo.order_service.kafka.OrderEventPublisher;
 import com.demo.order_service.models.OrderStatus;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InOrder;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -20,8 +18,6 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.inOrder;
-import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -34,42 +30,35 @@ class OrderServiceTest {
     @Mock
     private OrderTxService tx;
 
-    @Mock
-    private OrderEventPublisher publisher;
-
     @InjectMocks
     private OrderService orderService;
 
     @Test
-    @DisplayName("the order is committed BEFORE it is published, never the other way round")
-    void commitHappensBeforePublish() {
+    @DisplayName("createOrder simply delegates: publishing is the outbox's job now")
+    void delegatesToTheTransactionalService() {
 
         OrderResponse saved = sampleResponse();
         when(tx.create(any())).thenReturn(saved);
 
         orderService.createOrder(new CreateOrderRequest());
 
-        // Publishing first would let inventory reserve stock for an order that then rolls
-        // back and never exists.
-        InOrder sequence = inOrder(tx, publisher);
-        sequence.verify(tx).create(any());
-        sequence.verify(publisher).publishOrderPlaced(saved);
+        // Phase 5 removed the commit-then-publish dance from here entirely. The event is
+        // written to the outbox inside tx.create(), so there is nothing to sequence.
+        verify(tx).create(any());
     }
 
     @Test
-    @DisplayName("nothing is published if the order fails to persist")
-    void noEventWhenPersistFails() {
+    @DisplayName("a persistence failure propagates rather than being swallowed")
+    void persistFailurePropagates() {
 
         when(tx.create(any())).thenThrow(new IllegalStateException("db down"));
 
         assertThatThrownBy(() -> orderService.createOrder(new CreateOrderRequest()))
                 .isInstanceOf(IllegalStateException.class);
-
-        verify(publisher, never()).publishOrderPlaced(any());
     }
 
     @Test
-    @DisplayName("the caller gets the persisted order back, not the publish result")
+    @DisplayName("the caller gets the persisted order back")
     void returnsThePersistedOrder() {
 
         OrderResponse saved = sampleResponse();

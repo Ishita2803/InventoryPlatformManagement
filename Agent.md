@@ -336,56 +336,64 @@ Ordered roughly by how much time each one costs when forgotten.
    Letting Hibernate derive the name emits `create table order (...)`, which MySQL rejects
    with a syntax error pointing at the wrong token entirely. `OrderPersistenceTest` is what
    would catch a regression here.
-7. **`ExponentialBackOffWithMaxRetries` no longer exists.** Spring Framework 7 folded it
+7. **Declaring any `KafkaTemplate` bean switches off Boot's.** The auto-configuration is
+   `@ConditionalOnMissingBean(KafkaTemplate.class)` — a **raw-type** condition, so a
+   `KafkaTemplate<String, String>` bean removes the `KafkaTemplate<String, Object>` one and
+   every injection point for it fails. Both services therefore declare **both** templates
+   explicitly. Two related traps: Lombok does not copy `@Qualifier` onto generated
+   constructors (write the constructor by hand), and Boot's bean is named `kafkaTemplate`,
+   so by-name fallback silently picks it.
+8. **Anything already serialized must not go through `JsonSerializer`.** Outbox payloads and
+   dead-lettered records are already JSON strings; re-encoding them yields a quoted, escaped
+   JSON *string* the consumer cannot parse. Use the `stringKafkaTemplate`. Build it from the
+   auto-configured `ProducerFactory`'s own config, or it silently loses the timeout settings.
+9. **`ExponentialBackOffWithMaxRetries` no longer exists.** Spring Framework 7 folded it
    into `ExponentialBackOff`, which now has `setMaxAttempts(long)` and built-in
    `setJitter(long)`. Every Spring Kafka retry/DLT tutorial online still imports the old
    class from `org.springframework.util.backoff`, and it will not resolve.
-8. **DLT payloads arrive JSON-encoded.** The producer's value serializer is `JsonSerializer`
-   and the republished value is already a `String`, so the DLT record is a quoted, escaped
-   JSON string rather than the raw bytes. Lossless but awkward — unescape once when reading.
-9. **Never let the Kafka producer stamp Java type headers.** Event classes are duplicated
+10. **Never let the Kafka producer stamp Java type headers.** Event classes are duplicated
    per service, so `spring.json.add.type.headers` must stay `false`. Left on, the producer
    writes `__TypeId__: com.demo.order_service.events.OrderPlacedEvent`, and the consumer —
    which only has `com.demo.inventory_service.events.OrderPlacedEvent` — fails to
    deserialize every single message. Consumers use `StringDeserializer` plus a
    `StringJsonMessageConverter` bean, which takes the target type from the
    `@KafkaListener` method parameter instead.
-10. **`*IT` classes do not run under `./mvnw test`.** Surefire only picks up `*Test`,
+11. **`*IT` classes do not run under `./mvnw test`.** Surefire only picks up `*Test`,
    `Test*`, `*Tests`, `*TestCase`. The integration tests are named `*IT` and run under
    **`./mvnw verify`** via failsafe. A green `test` run therefore proves *less* than it
    looks — check which plugin actually executed.
-11. **Tests must set `spring.kafka.admin.auto-create: false`.** Otherwise every
+12. **Tests must set `spring.kafka.admin.auto-create: false`.** Otherwise every
    `@SpringBootTest` spends ~45 s watching `KafkaAdmin` retry the `NewTopic` beans against
    a broker that is not running. It is not a failure, just a silent 10x slowdown.
-12. **Running Kafka on Windows without Docker:** the `bin/windows/*.bat` scripts die with
+13. **Running Kafka on Windows without Docker:** the `bin/windows/*.bat` scripts die with
     *"The input line is too long"* — the expanded classpath exceeds cmd's 8191-char limit
     under any deep path. Bypass them and let the JVM expand the wildcard itself:
     `java -cp "<kafka>/libs/*" kafka.Kafka <config>` (and `kafka.tools.StorageTool` to
     format KRaft storage first). Also avoid passing `-Dlog4j.configuration=` through
     PowerShell, which mangles it.
-13. **Spring Boot 4 moved the test-slice annotations.** They are no longer under
+14. **Spring Boot 4 moved the test-slice annotations.** They are no longer under
    `org.springframework.boot.test.autoconfigure.*`:
    - `@DataJpaTest` → `org.springframework.boot.data.jpa.test.autoconfigure`
    - `@WebMvcTest` → `org.springframework.boot.webmvc.test.autoconfigure`
 
    Every tutorial online still shows the Boot 3 packages, so the import will look right and
    fail to resolve. `@MockitoBean` (not `@MockBean`) is likewise the current spelling.
-14. **DB passwords are `${MYSQL_PASSWORD:root}` placeholders — keep them that way.**
+15. **DB passwords are `${MYSQL_PASSWORD:root}` placeholders — keep them that way.**
    `config-repo/order-service.yaml` and `inventory-service.yaml` previously carried
    `password: "root"` in plaintext. Fixed 2026-08-25, and `config-repo`'s history was
    squashed to one commit before its first push, so the literal credential never reached
    GitHub at all. The `:root` default means local runs still need no env var. **Do not
    reintroduce a literal password** — `config-repo` is public, and history is forever once
    pushed. Phase 14 replaces the default with Secret Manager.
-15. **`java` on PATH is Java 8.** Use JDK 21: `JAVA_HOME=C:\Users\Karthik\.jdks\ms-21.0.12`.
+16. **`java` on PATH is Java 8.** Use JDK 21: `JAVA_HOME=C:\Users\Karthik\.jdks\ms-21.0.12`.
    `mvn` is not on PATH at all — use each module's `./mvnw`.
-16. **Both DBs share `localhost:3306`.** The design called for 3306/3307. Fine locally;
+17. **Both DBs share `localhost:3306`.** The design called for 3306/3307. Fine locally;
    Compose and the GCP data VM will split the schemas properly. Be honest about this.
-17. **Eureka registration lags roughly 40 s after boot** (client replication interval). An
+18. **Eureka registration lags roughly 40 s after boot** (client replication interval). An
     empty `/eureka/apps` immediately after startup is normal, not a failure.
-18. Maven needs network on first run — don't pass `-o`.
-19. `.idea/` is intentionally untracked; `.run/` is intentionally tracked.
-20. **The local toolchain for Part B does not exist yet.** No `gcloud`, `kubectl`, `docker`,
+19. Maven needs network on first run — don't pass `-o`.
+20. `.idea/` is intentionally untracked; `.run/` is intentionally tracked.
+21. **The local toolchain for Part B does not exist yet.** No `gcloud`, `kubectl`, `docker`,
     `helm` or `terraform` on this machine. Phase 12 installs them.
 
 ---
@@ -418,6 +426,28 @@ A 200 with **empty** `propertySources` means the filename doesn't match
 ## 10. Change log
 
 Newest first. Add an entry for every meaningful change.
+
+### 2026-08-26 — Phase 5 complete: the dual-write window is closed
+- **`outbox_event` written in the same transaction as the order.** `createOrder` no longer
+  talks to Kafka, so there is no longer a moment where the order exists and its event does
+  not. `OutboxPublisher` drains the table on a schedule and can retry indefinitely, because
+  the consumers have been idempotent since Phase 4 — the outbox and idempotent consumers are
+  two halves of one design, not two features.
+- `OrderEventPublisher` deleted; `OrderService.createOrder` is now a one-line delegate.
+- **Found a real serialization bug.** Outbox payloads are already-serialized JSON strings and
+  the default `JsonSerializer` re-encoded them into quoted, escaped JSON — inventory could
+  never have parsed it. Fixed with a string-valued template. Caught only because the test
+  asserted on payload fields rather than on delivery.
+- **Found a second, nastier one.** Adding that template switched off Boot's auto-configured
+  `KafkaTemplate` entirely: the condition is `@ConditionalOnMissingBean(KafkaTemplate.class)`,
+  a **raw-type** check that ignores generics. Both templates are now declared explicitly.
+  Related: Lombok does not copy `@Qualifier` onto generated constructors, and Boot's bean is
+  literally named `kafkaTemplate`, so by-name fallback would have injected the wrong one —
+  `OutboxPublisher` has a hand-written constructor for exactly this reason.
+- Deriving the string template from the auto-configured `ProducerFactory`, rather than
+  building its config from scratch, made it inherit the timeout settings; the broker-down
+  test went from **242s to 6s**.
+- 71 tests green (42 order-service, 29 inventory-service).
 
 ### 2026-08-26 — Phase 4 complete: exactly-once effect, and a dead-letter topic
 - **`processed_event` table in both services**, `eventId` as primary key, written **in the

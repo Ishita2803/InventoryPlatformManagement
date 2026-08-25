@@ -117,11 +117,10 @@ class DeadLetterIT {
 
         ConsumerRecord<String, String> dead = awaitDlt(key);
 
-        // Note the payload is JSON-encoded on the way to the DLT: the producer's value
-        // serializer is JsonSerializer and the value being republished is already a String,
-        // so it arrives quoted and escaped. Slightly awkward to read, but lossless -- the
-        // original bytes are recoverable.
-        assertThat(dead.value()).contains("not valid json");
+        // The payload reaches the DLT verbatim, not re-encoded. That is why the recoverer
+        // uses stringKafkaTemplate: routed through the default JsonSerializer the original
+        // text would arrive quoted and escaped.
+        assertThat(dead.value()).isEqualTo("{ this is not valid json at all ");
 
         // Spring records why it gave up, which is what makes a DLT worth having.
         String exceptionType = header(dead, "kafka_dlt-exception-fqcn");

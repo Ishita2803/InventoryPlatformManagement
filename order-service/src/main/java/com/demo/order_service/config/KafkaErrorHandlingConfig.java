@@ -6,6 +6,7 @@ import org.apache.kafka.common.TopicPartition;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.kafka.config.TopicBuilder;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.listener.DeadLetterPublishingRecoverer;
 import org.springframework.kafka.listener.DefaultErrorHandler;
@@ -24,8 +25,11 @@ public class KafkaErrorHandlingConfig {
     public static final String DLT_SUFFIX = ".DLT";
 
     @Bean
-    public DefaultErrorHandler kafkaErrorHandler(KafkaTemplate<String, Object> kafkaTemplate) {
+    public DefaultErrorHandler kafkaErrorHandler(
+            @Qualifier("stringKafkaTemplate") KafkaTemplate<String, String> kafkaTemplate) {
 
+        // The string template, so the dead-lettered payload is the original text rather
+        // than a JSON-encoded copy of it.
         DeadLetterPublishingRecoverer recoverer = new DeadLetterPublishingRecoverer(
                 kafkaTemplate,
                 (record, exception) ->

@@ -11,6 +11,7 @@ import com.demo.order_service.models.OrderItem;
 import com.demo.order_service.models.OrderStatus;
 import com.demo.order_service.models.ProcessedEvent;
 import com.demo.order_service.repository.OrderRepository;
+import com.demo.order_service.outbox.OutboxWriter;
 import com.demo.order_service.repository.ProcessedEventRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -42,13 +43,17 @@ class OrderTxServiceTest {
     @Mock
     private ProcessedEventRepository processedEventRepository;
 
+    @Mock
+    private OutboxWriter outboxWriter;
+
     private OrderTxService orderTxService;
 
     @BeforeEach
     void setUp() {
         // The real mapper, not a mock: it owns the UUID minting and the money arithmetic,
         // which are exactly the behaviours these tests are about.
-        orderTxService = new OrderTxService(orderRepository, new OrderMapper(), processedEventRepository);
+        orderTxService = new OrderTxService(
+                orderRepository, new OrderMapper(), processedEventRepository, outboxWriter);
     }
 
     @Test
@@ -96,6 +101,19 @@ class OrderTxServiceTest {
         Order saved = captor.getValue();
         assertThat(saved.getItems())
                 .allSatisfy(item -> assertThat(item.getOrder()).isSameAs(saved));
+    }
+
+    @Test
+    @DisplayName("creating an order queues its event in the outbox, in the same transaction")
+    void createQueuesTheEventInTheOutbox() {
+
+        when(orderRepository.save(any(Order.class))).thenAnswer(call -> call.getArgument(0));
+
+        OrderResponse response = orderTxService.create(request());
+
+        // Same method, therefore same transaction as the order insert. That atomicity is
+        // the entire point of the outbox.
+        verify(outboxWriter).writeOrderPlaced(response);
     }
 
     @Test

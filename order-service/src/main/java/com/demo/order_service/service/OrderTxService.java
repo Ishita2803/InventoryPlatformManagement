@@ -4,6 +4,7 @@ import com.demo.order_service.dto.CreateOrderRequest;
 import com.demo.order_service.dto.OrderResponse;
 import com.demo.order_service.exception.OrderNotFoundException;
 import com.demo.order_service.mapper.OrderMapper;
+import com.demo.order_service.outbox.OutboxWriter;
 import com.demo.order_service.models.Order;
 import com.demo.order_service.models.ProcessedEvent;
 import com.demo.order_service.models.OrderStatus;
@@ -33,18 +34,30 @@ public class OrderTxService {
     private final OrderRepository orderRepository;
     private final OrderMapper orderMapper;
     private final ProcessedEventRepository processedEventRepository;
+    private final OutboxWriter outboxWriter;
 
+    /**
+     * Persists the order and queues its event, in one transaction.
+     *
+     * <p>Nothing here talks to Kafka. The order row and the outbox row go to the same
+     * database in the same commit, so they are atomic by construction — there is no window
+     * in which one exists without the other. {@code OutboxPublisher} moves the event to the
+     * broker afterwards, and can retry for as long as it takes.
+     */
     @Transactional
     public OrderResponse create(CreateOrderRequest request) {
 
         Order order = orderMapper.toNewOrder(request);
         Order saved = orderRepository.save(order);
+        OrderResponse response = orderMapper.toResponse(saved);
+
+        outboxWriter.writeOrderPlaced(response);
 
         log.info("Created order {} for customer {} with {} item(s), total {}",
                 saved.getOrderId(), saved.getCustomerId(),
                 saved.getItems().size(), saved.getTotalAmount());
 
-        return orderMapper.toResponse(saved);
+        return response;
     }
 
     @Transactional(readOnly = true)

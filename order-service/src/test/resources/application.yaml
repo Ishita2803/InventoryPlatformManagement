@@ -52,3 +52,13 @@ eureka:
     enabled: false
     register-with-eureka: false
     fetch-registry: false
+
+# The outbox poller is effectively OFF in tests (one hour). Integration tests either invoke
+# drainOutbox() directly, or override the interval so it fires. A poller running underneath
+# every slice test would make assertions about outbox state racy.
+outbox:
+  poll-interval-ms: 3600000
+  initial-delay-ms: 3600000
+  batch-size: 100
+  max-attempts: 3
+  send-timeout-seconds: 5

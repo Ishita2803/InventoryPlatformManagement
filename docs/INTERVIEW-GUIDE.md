@@ -7,12 +7,14 @@
 > 1. **Never claim anything in the "Not built yet" section.** Interviewers probe everything.
 >    One "I said Saga but haven't actually done compensation" ends the credibility of the
 >    whole conversation.
-> 2. **Volunteering a weakness is a strength.** Saying "there's a dual-write window here and
->    here's how I'd close it" reads as senior. Being caught not knowing reads as junior.
-> 3. Everything below is **true as of Phases 0–4**. Status is tracked in
+> 2. **Volunteering a weakness is a strength.** Saying "two order-service instances could
+>    both drain the same outbox row; it's harmless because consumers are idempotent, and
+>    `SKIP LOCKED` is the clean fix" reads as senior. Being caught not knowing reads as
+>    junior.
+> 3. Everything below is **true as of Phases 0–5**. Status is tracked in
 >    [`plan.md`](../plan.md); implementation detail in [`Agent.md`](../Agent.md).
 
-**Last updated:** 2026-08-26, after Phase 4.
+**Last updated:** 2026-08-26, after Phase 5.
 
 ---
 
@@ -37,6 +39,12 @@ Add the *why*:
 > an `OrderPlaced` event goes on Kafka. Inventory consumes it, reserves, and publishes
 > `InventoryReserved` or `InventoryFailed`. Order-service consumes that and moves the order on.
 >
+> Getting the event out is its own problem: the order goes to MySQL and the event goes to
+> Kafka, two systems with no shared transaction, so a crash between them loses the event.
+> That's the dual-write problem, and I solved it with a transactional outbox — the event is
+> written to an outbox table in the same commit as the order, and a poller drains it to Kafka
+> afterwards.
+>
 > That buys decoupling but costs you exactly-once. Kafka is at-least-once, so the same event
 > *will* arrive twice. I handle that two ways: a `processed_event` table keyed by event ID,
 > written in the same transaction as the work, and a unique constraint on
@@ -54,11 +62,11 @@ Draw this. It's the whole system in six boxes:
    Client
      │  POST /api/orders
      ▼
-┌──────────────┐   1. save PENDING    ┌──────────┐
-│    order     │─────────────────────►│ order_db │
-│   service    │                      └──────────┘
+┌──────────────┐  1. save order + outbox row  ┌──────────┐
+│    order     │─────ONE TRANSACTION─────────►│ order_db │
+│   service    │                              └──────────┘
 └──────┬───────┘
-       │ 2. publish OrderPlaced (key = orderId)
+       │ 2. OutboxPublisher drains it (key = orderId)
        ▼
   ┌─────────────────── Kafka ───────────────────┐
   │  order.placed                               │
@@ -87,7 +95,7 @@ question.
 
 | Component | Port | Status | What it does | Why it exists |
 |---|---|---|---|---|
-| `order-service` | 8081 | **Built** | Owns the order lifecycle, `order_db` | The write side. Accepts orders without depending on inventory being up. |
+| `order-service` | 8081 | **Built** | Owns the order lifecycle and the outbox, `order_db` | The write side. Accepts orders without depending on inventory — or even Kafka — being up. |
 | `inventory-service` | 8082 | **Built** | Owns stock and reservations, `inventory_db` | The constrained resource. Everything hard in this project lives here. |
 | `config-service` | 8888 | **Built** | Spring Cloud Config Server | Configuration versioned in git with an audit trail, not baked into images. |
 | `discovery-service` | 8761 | **Built** | Eureka server | Service discovery locally. **Dropped on GKE** — Kubernetes DNS already does this. |
@@ -123,9 +131,11 @@ Be ready for "why did you use X?" on every one. The wrong answer is "it's popula
 Client        order-service        Kafka         inventory-service
   │                 │                │                  │
   ├─POST /orders───►│                │                  │
-  │                 ├─save PENDING   │                  │
-  │                 │  (COMMIT)      │                  │
+  │                 ├─save order              │         │
+  │                 │  + outbox row  │                  │
+  │                 │  (ONE COMMIT)  │                  │
   │◄──201 PENDING───┤                │                  │
+  │                 │  ...poller...  │                  │
   │                 ├─OrderPlaced───►│                  │
   │                 │                ├─────────────────►│
   │                 │                │                  ├─ processed_event insert
@@ -139,9 +149,10 @@ Client        order-service        Kafka         inventory-service
   │                 │  → INVENTORY_RESERVED              │
 ```
 
-**Say this:** *"Note the response returns at 201 PENDING — the client isn't waiting for
-inventory. And note both consumers write their idempotency record in the same transaction as
-their work."*
+**Say this:** *"Three things. The response returns 201 PENDING — the client isn't waiting for
+inventory. The order and its outbox row commit together, so the request path never touches
+Kafka. And both consumers write their idempotency record in the same transaction as their
+work."*
 
 ### Failure path — out of stock
 
@@ -229,26 +240,58 @@ row even though collisions are rare. Optimistic locking pays only when there's a
 conflict. If contention were high — flash-sale on one SKU — pessimistic would win, and I'd
 switch."*
 
-### 4.3 The dual-write problem *(currently open — say so)*
+### 4.3 The dual-write problem, and the transactional outbox
 
-**Problem.** `createOrder` does two things: commit to MySQL, then publish to Kafka. They're
-not one transaction. If the process dies between them, the order exists as PENDING and no
-consumer ever hears about it. It sits there forever.
+**Problem.** `createOrder` has to do two things: commit the order to MySQL, and publish to
+Kafka. They are separate systems, so they cannot share a transaction. Whichever order you
+pick is wrong:
 
-**What I did *not* do:** paper over it with a retry, which only narrows the window.
+- **commit then publish** → a crash in between leaves an order stuck PENDING that no consumer
+  ever hears about. It sits there forever.
+- **publish then commit** → worse. Inventory reserves stock for an order that then rolled
+  back and does not exist.
 
-**What I did:** publish strictly **after** commit, and document the gap in the code. The
-reverse order would be worse — inventory could reserve stock for an order that then rolled
-back.
+There is no ordering of two writes to two systems that is safe.
 
-**The fix (Phase 5, not built):** transactional outbox. Write the event into an `outbox_event`
-table *in the same transaction as the order*, then a poller drains it to Kafka and marks rows
-published. Now the order and the intent-to-publish commit atomically; the worst case is a
-delayed or duplicated publish, which the consumer is already idempotent against.
+**What I did.** Stop writing to two systems. The event is written to an `outbox_event` table
+**in the same transaction as the order** — one database, one commit, atomic by construction.
+A scheduled `OutboxPublisher` drains pending rows to Kafka afterwards and marks them
+published.
 
-> **Say this out loud, unprompted.** "There's a dual-write window here, I know exactly where
-> it is, and here's the outbox pattern that closes it" is one of the strongest things you can
-> say in a systems interview.
+**The guarantee changes shape.** Not "maybe published" but "will be published, eventually, at
+least once". At-least-once is acceptable here *precisely because* the consumers were made
+idempotent in Phase 4 — the outbox and idempotent consumers are two halves of one design, not
+two independent features. That connection is worth stating; it shows the pieces were chosen
+together rather than collected.
+
+**Details worth having ready:**
+
+- The publisher **blocks on the broker's acknowledgement** before marking a row published.
+  Fire-and-forget would mark rows published for sends that later failed — losing exactly what
+  the outbox exists to protect.
+- `fixedDelay`, not `fixedRate`: with fixedRate a slow drain overlaps itself and two threads
+  publish the same rows.
+- Rows drain **oldest-first, in capped batches**, so one backlog cannot stall a poll.
+- After the attempt budget is spent a row goes to `FAILED` and is skipped — same reasoning as
+  the DLT. Without a terminal state, one undeliverable row is retried on every poll forever
+  and delays everything behind it.
+
+**Known limitation, say it before they ask:** with more than one order-service instance, two
+pollers could pick up the same row and publish it twice. Harmless — the consumers are
+idempotent — but the clean fix is `SELECT ... FOR UPDATE SKIP LOCKED` so each poller claims a
+disjoint batch.
+
+> **This phase is a good "tell me about a bug you found" story.** Two real defects surfaced,
+> both because the tests asserted on *content* rather than on delivery:
+>
+> 1. Outbox payloads are already-serialized JSON held as `String`, and the default
+>    `JsonSerializer` re-encoded them into a quoted, escaped JSON string. Inventory could
+>    never have parsed it. A test that only checked "a message arrived" would have passed.
+> 2. Fixing that by adding a second `KafkaTemplate<String, String>` bean silently switched
+>    off Boot's auto-configured one — the condition is
+>    `@ConditionalOnMissingBean(KafkaTemplate.class)`, a **raw-type** check that ignores
+>    generics. Everything wanting `KafkaTemplate<String, Object>` stopped resolving. Both
+>    templates are now declared explicitly.
 
 ### 4.4 Poison messages and the DLT
 
@@ -343,10 +386,11 @@ processed_event  (same shape as above)
 
 | Fact | Value |
 |---|---|
-| Tests | **63** — 34 order-service, 29 inventory-service |
-| Test split | 55 unit/slice, 8 integration against a real embedded broker |
+| Tests | **71** — 42 order-service, 29 inventory-service |
+| Test split | 54 unit/slice, 17 integration against a real embedded broker |
 | Optimistic-lock retry | 4 attempts, exponential backoff with jitter |
 | Kafka consumer retry | 3 attempts, then DLT |
+| Outbox publish retry | 10 attempts (3 in tests), then quarantined as `FAILED` |
 | Verified E2E (happy) | qty 3 vs stock 10 → `INVENTORY_RESERVED`, stock 7/3, `version=1` |
 | Verified E2E (failure) | qty 999 → `INVENTORY_FAILED`, **no** reservation row, stock untouched |
 | Mutation check | `@Version` removed → 10 threads "succeed", only 2 units deducted |
@@ -421,7 +465,6 @@ not two.
 
 | Not built | Phase |
 |---|---|
-| Transactional outbox (the dual-write window is **open**) | 5 |
 | Notification service consumer — skeleton only | 6 |
 | API Gateway routes — skeleton only, no routing | 7 |
 | Payment service, Resilience4j circuit breaker | 8 |
@@ -467,7 +510,12 @@ Frame as problems solved, not technologies used.
 > failure metadata rather than blocking their partition — tested by asserting a valid message
 > queued behind a poison one is still processed.
 
-**Do not yet write:** Saga (partial), Outbox, Docker, Kubernetes, GCP, CI/CD, circuit breaker.
+> **Closed the dual-write gap between the database and the broker** with a transactional
+> outbox — the event is committed alongside the order and drained to Kafka out of band —
+> verified by pointing the service at a dead broker and asserting the order still commits
+> with its event queued for retry.
+
+**Do not yet write:** Saga (partial), Docker, Kubernetes, GCP, CI/CD, circuit breaker.
 
 ---
 

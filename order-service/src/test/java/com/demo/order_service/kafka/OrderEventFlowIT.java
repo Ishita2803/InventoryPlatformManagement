@@ -7,6 +7,7 @@ import com.demo.order_service.events.InventoryFailedEvent;
 import com.demo.order_service.events.InventoryReservedEvent;
 import com.demo.order_service.events.KafkaTopics;
 import com.demo.order_service.models.OrderStatus;
+import com.demo.order_service.outbox.OutboxPublisher;
 import com.demo.order_service.repository.OrderRepository;
 import com.demo.order_service.service.OrderService;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -60,6 +61,9 @@ class OrderEventFlowIT {
     private OrderRepository orderRepository;
 
     @Autowired
+    private OutboxPublisher outboxPublisher;
+
+    @Autowired
     private KafkaTemplate<String, Object> kafkaTemplate;
 
     @Autowired
@@ -94,6 +98,10 @@ class OrderEventFlowIT {
     void placingAnOrderPublishesTheEvent() {
 
         OrderResponse order = orderService.createOrder(request());
+
+        // Since Phase 5 the event goes to the outbox first; the poller is disabled in tests,
+        // so drain it by hand.
+        outboxPublisher.drainOutbox();
 
         JsonNode event = awaitOrderPlaced(order.orderId());
 

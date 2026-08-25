@@ -213,14 +213,35 @@ failure reason in its headers, and — separately asserted — **a valid message
 a poison one is still processed**, which is the failure this phase actually exists to
 prevent.
 
-## Phase 5 — Transactional Outbox (Order Service)
+## Phase 5 — Transactional Outbox (Order Service) ✅ *(done 2026-08-26)*
 
-- [ ] `outbox_event` table written in the **same transaction** as the order
-- [ ] Scheduled publisher drains the outbox to Kafka and marks rows published
-- [ ] Retry on publish failure
+- [x] `outbox_event` table written in the **same transaction** as the order. `createOrder`
+      no longer touches Kafka at all — one database, one commit, atomic by construction.
+- [x] Scheduled publisher (`fixedDelay`, not `fixedRate`) drains oldest-first in capped
+      batches and marks rows `PUBLISHED`, blocking on the broker's ack so a row is never
+      marked published for a send that later failed
+- [x] Retry on failure, recording attempt count and last error; once the budget is spent the
+      row becomes `FAILED` and is skipped, so one undeliverable event cannot be retried
+      forever ahead of everything queued behind it
 
-**Exit:** killing Kafka mid-`POST /api/orders` still yields a consistent order plus a
-pending outbox row that publishes once Kafka returns.
+**Two real bugs this phase surfaced**, both caught by tests asserting on *content* rather
+than merely on delivery:
+
+1. **Double-encoded payloads.** The outbox payload is already-serialized JSON held as a
+   `String`, and the default `JsonSerializer` re-encoded it into a quoted, escaped JSON
+   string. Inventory-service could never have deserialized it. Fixed with a separate
+   string-valued template.
+2. **A vanishing bean.** Adding that second template silently switched off Boot's
+   auto-configured `KafkaTemplate`, because the condition is
+   `@ConditionalOnMissingBean(KafkaTemplate.class)` — raw type, generics ignored. Every
+   injection point wanting `KafkaTemplate<String, Object>` stopped resolving. Both templates
+   are now declared explicitly.
+
+**Exit:** met, and tested with **no broker at all** rather than by killing one mid-request.
+With `bootstrap-servers` pointed at a dead port: `createOrder` returns `PENDING` without
+throwing or hanging, the order is durably committed, and its event waits `PENDING` in the
+outbox. A failed drain records the attempt and leaves the row pending; once the budget is
+spent the row is quarantined as `FAILED` and further drains ignore it.
 
 ## Phase 6 — Notification Service
 
