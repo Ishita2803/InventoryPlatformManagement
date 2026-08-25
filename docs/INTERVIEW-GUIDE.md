@@ -1,0 +1,484 @@
+# Interview guide — Fault-Tolerant Order Fulfillment Platform
+
+> **What this file is for.** Everything you need to explain this project confidently, from a
+> 30-second pitch to a whiteboard deep-dive, plus the awkward questions and honest answers.
+>
+> **Read the rules first:**
+> 1. **Never claim anything in the "Not built yet" section.** Interviewers probe everything.
+>    One "I said Saga but haven't actually done compensation" ends the credibility of the
+>    whole conversation.
+> 2. **Volunteering a weakness is a strength.** Saying "there's a dual-write window here and
+>    here's how I'd close it" reads as senior. Being caught not knowing reads as junior.
+> 3. Everything below is **true as of Phases 0–4**. Status is tracked in
+>    [`plan.md`](../plan.md); implementation detail in [`Agent.md`](../Agent.md).
+
+**Last updated:** 2026-08-26, after Phase 4.
+
+---
+
+## 1. The pitch
+
+### 30 seconds
+
+> "It's an event-driven order fulfillment platform — Spring Boot microservices talking over
+> Kafka. You place an order, it's accepted immediately as PENDING, and inventory reserves
+> stock asynchronously and reports back. The interesting part isn't the CRUD; it's the
+> failure handling — making the consumer idempotent so a redelivered event can't
+> double-reserve stock, optimistic locking so concurrent orders can't oversell, and a
+> dead-letter topic so one bad message can't stall the queue."
+
+### 2 minutes
+
+Add the *why*:
+
+> "The naive version is order-service calling inventory-service over REST. That couples them:
+> if inventory is down, you can't take orders at all, and you've made your revenue path
+> depend on your warehouse system's uptime. So orders are accepted and persisted first, then
+> an `OrderPlaced` event goes on Kafka. Inventory consumes it, reserves, and publishes
+> `InventoryReserved` or `InventoryFailed`. Order-service consumes that and moves the order on.
+>
+> That buys decoupling but costs you exactly-once. Kafka is at-least-once, so the same event
+> *will* arrive twice. I handle that two ways: a `processed_event` table keyed by event ID,
+> written in the same transaction as the work, and a unique constraint on
+> (orderId, productId, warehouseId) so even a regenerated event ID can't double-reserve.
+>
+> Concurrency is separate: two different orders hitting the same stock row. That's an
+> `@Version` column with bounded retry — and I proved it works by deleting the annotation and
+> watching the test fail with a classic lost update."
+
+### The whiteboard version
+
+Draw this. It's the whole system in six boxes:
+
+```
+   Client
+     │  POST /api/orders
+     ▼
+┌──────────────┐   1. save PENDING    ┌──────────┐
+│    order     │─────────────────────►│ order_db │
+│   service    │                      └──────────┘
+└──────┬───────┘
+       │ 2. publish OrderPlaced (key = orderId)
+       ▼
+  ┌─────────────────── Kafka ───────────────────┐
+  │  order.placed                               │
+  │  inventory.reserved                         │
+  │  inventory.failed                           │
+  │  *.DLT   ← poison messages land here        │
+  └────┬────────────────────────────▲───────────┘
+       │ 3. consume                 │ 4. publish result
+       ▼                            │
+┌──────────────┐   reserve stock  ┌─┴────────────┐
+│  inventory   │─────────────────►│ inventory_db │
+│   service    │                  └──────────────┘
+└──────────────┘
+       │
+       │ 5. order-service consumes the result,
+       ▼   moves order PENDING → INVENTORY_RESERVED / INVENTORY_FAILED
+```
+
+Then say: *"Config Server and Eureka sit alongside for configuration and discovery. Gateway,
+notification and payment are planned but not built yet."* — honest, and it pre-empts the
+question.
+
+---
+
+## 2. Every component, and why it exists
+
+| Component | Port | Status | What it does | Why it exists |
+|---|---|---|---|---|
+| `order-service` | 8081 | **Built** | Owns the order lifecycle, `order_db` | The write side. Accepts orders without depending on inventory being up. |
+| `inventory-service` | 8082 | **Built** | Owns stock and reservations, `inventory_db` | The constrained resource. Everything hard in this project lives here. |
+| `config-service` | 8888 | **Built** | Spring Cloud Config Server | Configuration versioned in git with an audit trail, not baked into images. |
+| `discovery-service` | 8761 | **Built** | Eureka server | Service discovery locally. **Dropped on GKE** — Kubernetes DNS already does this. |
+| Kafka | 9092 | **Running** | 3 topics + DLTs, KRaft mode | The decoupling. No ZooKeeper — KRaft is the modern setup. |
+| MySQL | 3306 | **Running** | `order_db`, `inventory_db` | A database per service. Currently one instance, two schemas — see honesty section. |
+| `api-gateway-service` | 8080 | **Skeleton** | Single entry point | Planned Phase 7. **Application class only, no routes.** |
+| `notification-service` | 8083 | **Skeleton** | Consume events, mock email | Planned Phase 6. **Application class only, no consumer.** |
+| `payment-service` | — | **Not created** | Mocked, synchronous | Planned Phase 8. Exists to give Resilience4j a real target. |
+
+### Why each *technology* is there
+
+Be ready for "why did you use X?" on every one. The wrong answer is "it's popular."
+
+- **Kafka** — decouples order acceptance from stock availability, and gives durable replay.
+  A queue you can rewind is different from a queue you can only drain.
+- **MySQL per service** — each service owns its data. No shared database, so no cross-service
+  join sneaking in and welding the two together.
+- **Spring Cloud Config** — config has its own lifecycle and audit trail. It's read from a
+  *remote* git repo, so a pod in Kubernetes gets the same config as a laptop.
+- **Eureka** — client-side discovery locally. Honest answer for GKE: *"it's redundant there,
+  so I drop it. Kubernetes Services already do discovery. Keeping it would be cargo-culting."*
+- **Optimistic locking (`@Version`)** — reads massively outnumber conflicts on a stock row,
+  so pessimistic `SELECT ... FOR UPDATE` would serialise everything for a rare collision.
+- **Lombok** — boilerplate only. No behaviour.
+
+---
+
+## 3. The two flows
+
+### Happy path
+
+```
+Client        order-service        Kafka         inventory-service
+  │                 │                │                  │
+  ├─POST /orders───►│                │                  │
+  │                 ├─save PENDING   │                  │
+  │                 │  (COMMIT)      │                  │
+  │◄──201 PENDING───┤                │                  │
+  │                 ├─OrderPlaced───►│                  │
+  │                 │                ├─────────────────►│
+  │                 │                │                  ├─ processed_event insert
+  │                 │                │                  ├─ check ALL lines
+  │                 │                │                  ├─ apply ALL lines
+  │                 │                │                  │  (ONE COMMIT)
+  │                 │                │◄─InventoryReserved┤
+  │                 │◄───────────────┤                  │
+  │                 ├─ processed_event + status change   │
+  │                 │  (ONE COMMIT)                      │
+  │                 │  → INVENTORY_RESERVED              │
+```
+
+**Say this:** *"Note the response returns at 201 PENDING — the client isn't waiting for
+inventory. And note both consumers write their idempotency record in the same transaction as
+their work."*
+
+### Failure path — out of stock
+
+Identical until inventory checks. Then:
+
+```
+inventory-service:
+  ├─ processed_event insert
+  ├─ check ALL lines  → line 2 is short
+  ├─ return FAILED    ← nothing was applied, so nothing to undo
+  │  (COMMIT: only the processed_event row)
+  └─ publish InventoryFailed
+       │
+order-service → order becomes INVENTORY_FAILED
+```
+
+**The key line to say:** *"Because I validate every line before applying any, a partial order
+reserves nothing at all. There's no compensation needed for the in-flight case. Earlier I
+reserved line-by-line and released on failure, which left a window where stock was held for
+an order already doomed to fail."*
+
+### Failure path — poison message
+
+```
+bad JSON → inventory-service listener
+    → conversion fails
+    → marked NOT retryable (it won't parse the second time either)
+    → straight to order.placed.DLT with failure headers
+    → the next message is processed normally  ← the point
+```
+
+---
+
+## 4. The five hard problems
+
+This is the heart of the interview. For each: **the problem → what breaks → what I did.**
+
+### 4.1 Idempotent consumers
+
+**Problem.** Kafka is at-least-once. A consumer that commits its offset after processing can
+crash in between, and the same event is redelivered. Reserve twice, and stock silently
+vanishes.
+
+**What I did.** Two independent defences:
+
+1. **`processed_event` table**, `eventId` as primary key, **written in the same transaction as
+   the work**. This ordering is everything:
+   - written *before* the work → crash loses the work, redelivery skips it. **Lost update.**
+   - written *after* the work → crash repeats the work. **Duplicate.**
+   - written *together* → both or neither. **Exactly-once effect.**
+2. **Unique constraint on `(orderId, productId, warehouseId)`** in the reservation table.
+
+**Why both?** *"The event table handles a redelivered event. The constraint handles the case
+where the publisher regenerates the event ID — a retry from an outbox, say — where the event
+ID is different but the business intent is identical. And it's enforced by the database, so
+two concurrent consumers can't both pass an application-level 'have I seen this?' check."*
+
+> **Killer detail to mention:** exactly-*once delivery* is impossible; exactly-once **effect**
+> is what you actually engineer. Saying this distinguishes you immediately.
+
+### 4.2 Overselling under concurrency
+
+**Problem.** Two orders for the last 5 units arrive simultaneously. Both read `available=5`,
+both write `available=0`. You've sold 10 units of 5 stock.
+
+**What I did.** `@Version` on the `Inventory` entity. Hibernate emits
+`UPDATE ... WHERE id=? AND version=?`; the loser updates 0 rows and gets
+`ObjectOptimisticLockingFailureException`. A **bounded** retry (4 attempts, exponential
+backoff **with jitter**) re-reads and tries again. Exhausted retries → HTTP 409, not 500 —
+contention is a normal outcome, not a server fault.
+
+**Why bounded?** *"Unbounded retry under sustained contention is a livelock. It presents as a
+hung request and takes the thread pool with it."*
+
+**Why jitter?** *"Without it, contending threads back off by identical amounts and collide
+again in lockstep."*
+
+> **The detail that wins this question:** *"I verified the test can actually fail. I removed
+> `@Version` and re-ran it — all 10 threads reported success, implying 20 units reserved,
+> while only 2 were actually deducted. Classic lost update. A concurrency test you've never
+> seen go red isn't evidence of anything; plenty pass because the threads quietly serialised."*
+
+**Why not pessimistic locking?** *"`SELECT FOR UPDATE` serialises every reservation on that
+row even though collisions are rare. Optimistic locking pays only when there's an actual
+conflict. If contention were high — flash-sale on one SKU — pessimistic would win, and I'd
+switch."*
+
+### 4.3 The dual-write problem *(currently open — say so)*
+
+**Problem.** `createOrder` does two things: commit to MySQL, then publish to Kafka. They're
+not one transaction. If the process dies between them, the order exists as PENDING and no
+consumer ever hears about it. It sits there forever.
+
+**What I did *not* do:** paper over it with a retry, which only narrows the window.
+
+**What I did:** publish strictly **after** commit, and document the gap in the code. The
+reverse order would be worse — inventory could reserve stock for an order that then rolled
+back.
+
+**The fix (Phase 5, not built):** transactional outbox. Write the event into an `outbox_event`
+table *in the same transaction as the order*, then a poller drains it to Kafka and marks rows
+published. Now the order and the intent-to-publish commit atomically; the worst case is a
+delayed or duplicated publish, which the consumer is already idempotent against.
+
+> **Say this out loud, unprompted.** "There's a dual-write window here, I know exactly where
+> it is, and here's the outbox pattern that closes it" is one of the strongest things you can
+> say in a systems interview.
+
+### 4.4 Poison messages and the DLT
+
+**Problem.** One malformed payload at the head of a partition, retried forever, and every
+good message behind it stops. This is how event-driven systems quietly die.
+
+**What I did.** `DefaultErrorHandler` with 3 retries, exponential backoff with jitter, then
+`DeadLetterPublishingRecoverer` → `<topic>.DLT`, carrying headers with the original topic and
+the exception. **Conversion failures are registered as not-retryable** — a payload that won't
+parse won't parse the second time, so retrying just delays everything behind it.
+
+> **What I test that most people don't:** not only that the poison message reaches the DLT,
+> but that **a valid message queued behind it on the same partition is still processed**. A
+> DLT that works while the partition stalls anyway would pass the obvious test and still be
+> broken.
+
+### 4.5 Saga / distributed transactions
+
+**Problem.** You can't have an ACID transaction across order-service and inventory-service.
+
+**What I did.** A **choreography-based saga**: no central orchestrator, each service reacts to
+events and emits its own. Order → `OrderPlaced` → Inventory → `InventoryReserved`/`Failed` →
+Order updates.
+
+**Compensation:** `releaseInventory(orderId)` is order-scoped and exists — it releases every
+line an order holds. It's currently only needed for a *downstream* failure (payment, Phase 8);
+the in-flight partial-order case can't happen because reservation is all-or-nothing.
+
+**Choreography vs orchestration, if asked:**
+> *"Choreography, because there are only two participants and no complex branching — an
+> orchestrator would be a component to build, deploy and keep available for no benefit. With
+> five or six steps and conditional paths I'd switch to orchestration, because with
+> choreography the business process ends up as an emergent property of scattered listeners
+> and nobody can see it in one place."*
+
+---
+
+## 5. The data model
+
+**order-service** (`order_db`)
+
+```
+orders                          order_item
+──────                          ──────────
+id            BIGINT PK  ◄──┐   id             BIGINT PK
+order_id      VARCHAR UQ    └───order_id_fk    BIGINT FK
+customer_id   VARCHAR          product_id     BIGINT
+status        VARCHAR          warehouse_id   VARCHAR
+total_amount  DECIMAL(19,2)    quantity       INT
+created_at / updated_at        unit_price     DECIMAL(19,2)
+
+processed_event
+───────────────
+event_id      VARCHAR PK   ← the idempotency key
+event_type    VARCHAR
+processed_at  TIMESTAMP
+```
+
+**inventory-service** (`inventory_db`)
+
+```
+product              inventory                      reservation
+───────              ─────────                      ───────────
+id      BIGINT PK    id                 BIGINT PK   id            BIGINT PK
+sku     VARCHAR UQ   product_id         BIGINT      order_id      VARCHAR  ┐
+name    VARCHAR      warehouse_id       VARCHAR     product_id    BIGINT   ├ UNIQUE
+                     available_quantity INT         warehouse_id  VARCHAR  ┘
+                     reserved_quantity  INT         quantity      INT
+                     version            BIGINT ←──  status        VARCHAR
+                                        @Version    created_at / updated_at
+processed_event  (same shape as above)
+```
+
+**Three modelling decisions to be able to defend:**
+
+1. **`orderId` is a UUID string, not the surrogate `id`.** It's a cross-service identifier
+   travelling in Kafka events. Keying inventory's reservations on order-service's
+   auto-increment number would couple inventory to another service's sequence and break the
+   moment order data is migrated or resharded. The surrogate `id` never leaves the service —
+   it isn't even in the API response.
+2. **`warehouseId` lives on `order_item`.** Inventory keys reservations on
+   (orderId, productId, warehouseId), so without it the event couldn't reserve anything.
+3. **Money is `BigDecimal(19,2)`, never `double`.** Floating point accumulates rounding error;
+   an order total off by a cent surfaces in production reconciliation, not in tests.
+4. **The table is `orders`, not `order`.** `ORDER` is a reserved SQL word — Hibernate's
+   derived name produces `create table order (...)`, which MySQL rejects with a syntax error
+   pointing at the wrong token.
+
+---
+
+## 6. Numbers and facts worth memorising
+
+| Fact | Value |
+|---|---|
+| Tests | **63** — 34 order-service, 29 inventory-service |
+| Test split | 55 unit/slice, 8 integration against a real embedded broker |
+| Optimistic-lock retry | 4 attempts, exponential backoff with jitter |
+| Kafka consumer retry | 3 attempts, then DLT |
+| Verified E2E (happy) | qty 3 vs stock 10 → `INVENTORY_RESERVED`, stock 7/3, `version=1` |
+| Verified E2E (failure) | qty 999 → `INVENTORY_FAILED`, **no** reservation row, stock untouched |
+| Mutation check | `@Version` removed → 10 threads "succeed", only 2 units deducted |
+| Stack | Java 21, Spring Boot 4.1, Spring Cloud 2025.1.2, Kafka KRaft, MySQL 8 |
+
+**`version=1` is worth quoting** — it proves exactly one optimistic-locked update happened,
+not two.
+
+---
+
+## 7. Questions you will get, and answers
+
+**"Why events instead of a REST call to inventory?"**
+> Coupling and availability. A synchronous call means you can't accept orders when inventory
+> is down — you've tied revenue to warehouse-system uptime. Async means orders are accepted
+> and reconciled when inventory recovers. The cost is eventual consistency: the customer sees
+> PENDING briefly, which is a business decision, not a technical accident.
+
+**"Why duplicate the event classes instead of a shared module?"**
+> A shared events jar couples deployments — change the contract and every service must be
+> released in lockstep, which defeats the point of separate services. Duplication costs a
+> synchronised edit; sharing costs independent deployability.
+>
+> *Follow-up detail:* it forced a related decision — the producer must **not** write Java type
+> headers, because `__TypeId__` would name a class the consumer can't load and every message
+> would fail to deserialize. The wire contract is plain JSON, and the consumer takes the
+> target type from the listener method signature.
+
+**"How do you guarantee exactly-once?"**
+> You don't — exactly-once *delivery* is impossible. You engineer exactly-once **effect**:
+> at-least-once delivery plus idempotent consumers. [Then §4.1.]
+
+**"What if the consumer crashes halfway through?"**
+> The database transaction rolls back and the offset was never committed, so Kafka redelivers.
+> The work is retried from a clean state. That's why the `processed_event` row must be in the
+> same transaction — otherwise the crash leaves the two out of step.
+
+**"Why one partition? Doesn't that limit throughput?"**
+> Yes, and it's deliberate for now. Ordering is only guaranteed *within* a partition, and
+> events are keyed by `orderId`, so scaling to N partitions keeps per-order ordering intact —
+> the keying is already correct, only the partition count changes. I haven't measured
+> throughput yet, so I'd rather not guess at a number.
+
+**"What happens if events arrive out of order?"**
+> Within one order they can't — same key, same partition. Across orders it doesn't matter,
+> they're independent. And the order state machine refuses illegal transitions, so a stale
+> event can't drag a terminal order back to life. Terminal states accept nothing.
+
+**"How do you replay from the DLT?"**
+> Today: manually — inspect the message and its failure headers, fix the cause, republish to
+> the original topic. There's no automated replay tool, and I'd want one before this was
+> anything real.
+
+**"Where does this break at 10× scale?"**
+> Three places. The `processed_event` tables grow unbounded — they need a retention job. The
+> single Kafka partition caps consumer parallelism. And the outbox poller in Phase 5 becomes a
+> bottleneck if it's a single scheduled thread. None are hard to fix; none are done.
+
+**"Why is Eureka there if you're deploying to Kubernetes?"**
+> It shouldn't be, and it isn't — I drop it on GKE. Kubernetes Services already do discovery,
+> so running Eureka there would be redundant infrastructure. It stays for local runs where
+> there's no cluster.
+
+**"What would you do differently?"**
+> Build the outbox before the plain publish rather than after — I knowingly shipped a
+> dual-write window I then had to document. And I'd verify the Docker Compose file earlier
+> instead of writing infrastructure I couldn't run.
+
+---
+
+## 8. NOT built yet — never claim these
+
+| Not built | Phase |
+|---|---|
+| Transactional outbox (the dual-write window is **open**) | 5 |
+| Notification service consumer — skeleton only | 6 |
+| API Gateway routes — skeleton only, no routing | 7 |
+| Payment service, Resilience4j circuit breaker | 8 |
+| Dockerfiles; `docker-compose.yml` **written but never executed** | 9 |
+| Testcontainers, CI pipeline | 10 |
+| README, ADRs, OpenAPI, **any throughput benchmark** | 11 |
+| Everything GCP: GKE, Secret Manager, deployment | 12–18 |
+
+**Also be honest about these:**
+
+- **Both schemas are on one MySQL instance locally.** The design calls for separate instances;
+  the Compose file does split them. Say "one instance, two schemas locally — separated in
+  Compose" rather than implying full isolation.
+- **Single Kafka broker.** No replication, no HA. `acks=all` is set, which matters only once
+  there's more than one broker.
+- **No authentication anywhere.** No auth on endpoints, no TLS, no Kafka SASL.
+- **Unit price comes from the client.** A real system prices server-side from a catalogue; a
+  client that sets its own price can set it to zero.
+- **No metrics or tracing.** Actuator health only.
+
+If asked "is this production-ready?" — **no, and say so**: no auth, no HA, no observability,
+no load testing. It's a correctness demonstrator.
+
+---
+
+## 9. Résumé bullets that are defensible *today*
+
+Frame as problems solved, not technologies used.
+
+> **Built an event-driven order platform (Java 21, Spring Boot 4, Kafka, MySQL)** that
+> decouples order intake from stock reservation, so inventory outages delay fulfilment
+> instead of blocking order acceptance.
+
+> **Made Kafka consumers idempotent** using a processed-event ledger written in the same
+> transaction as the work, plus a database uniqueness constraint — verified by replaying
+> duplicate events and asserting stock moves exactly once.
+
+> **Eliminated overselling under concurrency** with JPA optimistic locking and bounded
+> jittered retry; validated with a 10-thread contention test, and confirmed the test's own
+> validity by mutation-testing the lock away and watching it fail.
+
+> **Added bounded retry and dead-letter routing** so malformed messages are quarantined with
+> failure metadata rather than blocking their partition — tested by asserting a valid message
+> queued behind a poison one is still processed.
+
+**Do not yet write:** Saga (partial), Outbox, Docker, Kubernetes, GCP, CI/CD, circuit breaker.
+
+---
+
+## 10. Keeping this file honest
+
+**This file must be updated in the same commit as every phase**, alongside `plan.md` and
+`Agent.md` — see `Agent.md` §0. Specifically:
+
+- Move items out of §8 as they're built, and add them to §2 and §9.
+- Add each new hard problem to §4 in the same problem → breaks → did shape.
+- Refresh the test counts and verified numbers in §6 — **quote real measurements only**.
+
+A guide that overstates the project is worse than no guide, because you'll repeat it in a
+room with someone who asks a second question.

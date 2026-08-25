@@ -11,15 +11,18 @@
    rationale, and the traps that will cost you time. **Start here.**
 2. **[`plan.md`](plan.md)** — the canonical phased plan with exit criteria. Find the current
    phase and its open checkboxes before proposing any work.
+3. **[`docs/INTERVIEW-GUIDE.md`](docs/INTERVIEW-GUIDE.md)** — how the project is explained in
+   interviews. **Update it with every phase**, and never let it claim more than is built.
 
 Original design conversation: `../Order & Inventory Platform.pdf` (outside the repo,
 257 pages, text-extractable with `pdftotext -layout`).
 
 ## Rules for working in this repo
 
-- **Update `Agent.md` in the same commit as the change.** Tick the `plan.md` checkbox, add a
-  dated entry to `Agent.md` §10 Change log, and refresh §5 Implementation status. The update
-  protocol is `Agent.md` §0.
+- **Update `Agent.md` and `docs/INTERVIEW-GUIDE.md` in the same commit as the change.** Tick
+  the `plan.md` checkbox, add a dated entry to `Agent.md` §10 Change log, refresh §5
+  Implementation status, and keep the interview guide from claiming more than is built. The
+  full protocol is `Agent.md` §0.
 - **Do not start a phase before the previous phase's exit criteria pass.** Each phase must
   leave a running system.
 - **This is a portfolio project.** Optimise for defensible interview talking points, not

@@ -17,12 +17,18 @@
 Every task that changes architecture, status, or a gotcha **must** update this file in the
 same commit. Specifically:
 
-1. Tick the box in `plan.md` and record the outcome in **§9 Change log** here (newest first,
-   dated).
+1. Tick the box in `plan.md` and record the outcome in **§10 Change log** here (newest
+   first, dated).
 2. Update **§5 Implementation status** — it must never describe code that no longer exists.
 3. If you hit a trap that cost you time, add it to **§8 Traps and gotchas**. That section is
    the highest-value part of this file.
 4. If a decision was made, add it to **§7 Locked decisions** with the *why*, not just the what.
+5. **Update [`docs/INTERVIEW-GUIDE.md`](docs/INTERVIEW-GUIDE.md).** Move anything just built
+   out of its "NOT built yet" list, add the new hard problem in the
+   problem → what breaks → what I did shape, and refresh the test counts and verified
+   numbers with **real measurements only**. That file is what turns this work into offers,
+   and an overstated one is worse than none — Karthik will repeat it in a room with someone
+   who asks a second question.
 
 Do not let this file drift. A stale Agent.md is worse than no Agent.md, because the next
 session will trust it.
@@ -106,6 +112,8 @@ its directory name. That is deliberate but easy to trip over.
 InventoryPlatformManagement/          <- git root
 ├── Agent.md                          <- this file: context and state
 ├── plan.md                           <- the phased plan (canonical)
+├── docs/
+│   └── INTERVIEW-GUIDE.md         <- how to explain this project; keep in step
 ├── CLAUDE.md                         <- thin pointer to this file
 ├── README.md                         <- still a stub (Phase 11)
 ├── .gitignore
