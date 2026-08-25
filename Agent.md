@@ -167,10 +167,35 @@ Entities live in a `models` package, not `entity`.
 - **23 tests, all green.** Business rules (Mockito), retry policy (Mockito), HTTP contract
   (`@WebMvcTest`), and real concurrency against H2 (`@DataJpaTest`).
 
-### `order-service` — **skeleton only**
-Application class with `@EnableDiscoveryClient` plus a config-client `application.yaml`.
-**No entity, repository, service, controller or DTO exists.** This is the largest gap.
-The pom already carries JPA, MySQL, Validation, Kafka and Resilience4j — all unused.
+### `order-service` — Phase 2 complete
+- `models/Order` — surrogate `id`, plus **`orderId` (String UUID, unique)** as the public
+  cross-service identifier. Table is **`orders`**, not `order` (see §8). `customerId`,
+  `status`, `totalAmount` (`BigDecimal(19,2)`), `items`, `createdAt`, `updatedAt`.
+  `addItem()` maintains both sides of the association; `transitionTo()` enforces the
+  lifecycle.
+- `models/OrderItem` — `productId`, **`warehouseId`**, `quantity`, `unitPrice`, `lineTotal()`.
+  `warehouseId` lives here because inventory keys reservations on
+  (orderId, productId, warehouseId); without it the Phase 3 `OrderPlaced` event could not
+  reserve anything.
+- `models/OrderStatus` — `PENDING` → `INVENTORY_RESERVED` → `CONFIRMED`, with
+  `INVENTORY_FAILED` and `CANCELLED`. **Legal transitions are encoded** in
+  `canTransitionTo` / `allowedNextStates` / `isTerminal`, so a late or duplicated Kafka
+  event cannot revive a terminal order.
+- `OrderRepository` — `findByOrderId`, `findAllBy(Pageable)`, both with
+  `@EntityGraph("items")` to avoid an N+1 on the response
+- DTOs: `CreateOrderRequest`, `OrderItemRequest`, `OrderResponse`, `OrderItemResponse`
+  (records). **`OrderResponse` deliberately omits the surrogate `id`.**
+- `OrderMapper` — hand-written; mints the UUID **server-side** and sums money in
+  `BigDecimal`
+- `OrderService` — `createOrder` (PENDING), `getOrder`, `listOrders(Pageable)`,
+  `transitionOrder`. Makes **no** call to inventory: checking stock synchronously would
+  reintroduce exactly the coupling the event-driven design removes.
+- `OrderController` — `POST /api/orders` (201), `GET /api/orders/{orderId}`,
+  `GET /api/orders?page=&size=` (paged, size capped at 100)
+- `GlobalExceptionHandler` — `OrderNotFound` → 404,
+  `InvalidOrderStateTransition` → 409, `@Valid` → 400 with nested field paths
+- **25 tests, all green**, plus verified end-to-end against real MySQL.
+- Kafka and Resilience4j are on the classpath but still unused — Phases 3 and 8.
 
 ### `notification-service`, `api-gateway-service` — skeletons
 Application classes only. Both are config clients. The gateway has **no routes** yet.
@@ -194,7 +219,7 @@ All four config clients boot on ports they know *only* from Config Server, repor
 
 `config-repo` is a **separate git repository**, registered as a submodule of this one.
 
-- Submodule URL: `https://github.com/Karthik0770/order-platform-config-repo.git`
+- Submodule URL: `https://github.com/Ishita2803/order-platform-config-repo.git`
 - Tracked branch: **`master`**, not `main`
 
 Rationale: configuration has its own lifecycle and audit trail, and Config Server reads it
@@ -276,7 +301,7 @@ Ordered roughly by how much time each one costs when forgotten.
 
    This working copy only survives it because `config-repo/.git` is still a real directory,
    left over from the pre-submodule nested-repo layout. Fixed 2026-08-25 by pointing
-   `config-service` at the **remote** `https://github.com/Karthik0770/order-platform-config-repo.git`.
+   `config-service` at the **remote** `https://github.com/Ishita2803/order-platform-config-repo.git`.
    Because the URI is no longer relative, **the old working-directory constraint is gone** —
    `.run/config-service.run.xml` still pins it, but nothing depends on that any more.
 4. **Config Server reads pushed state only.** Now that the URI is remote, a config change
@@ -286,29 +311,33 @@ Ordered roughly by how much time each one costs when forgotten.
    travels inside Kafka events, so it must not be order-service's auto-increment surrogate
    key. Phase 2's `Order` entity must therefore expose a UUID business identifier, whatever
    it uses as its own primary key. Decided 2026-08-25 when `Reservation` was built.
-6. **Spring Boot 4 moved the test-slice annotations.** They are no longer under
+6. **`ORDER` is a reserved word in SQL**, so `Order` is mapped to `@Table(name = "orders")`.
+   Letting Hibernate derive the name emits `create table order (...)`, which MySQL rejects
+   with a syntax error pointing at the wrong token entirely. `OrderPersistenceTest` is what
+   would catch a regression here.
+7. **Spring Boot 4 moved the test-slice annotations.** They are no longer under
    `org.springframework.boot.test.autoconfigure.*`:
    - `@DataJpaTest` → `org.springframework.boot.data.jpa.test.autoconfigure`
    - `@WebMvcTest` → `org.springframework.boot.webmvc.test.autoconfigure`
 
    Every tutorial online still shows the Boot 3 packages, so the import will look right and
    fail to resolve. `@MockitoBean` (not `@MockBean`) is likewise the current spelling.
-7. **DB passwords are `${MYSQL_PASSWORD:root}` placeholders — keep them that way.**
+8. **DB passwords are `${MYSQL_PASSWORD:root}` placeholders — keep them that way.**
    `config-repo/order-service.yaml` and `inventory-service.yaml` previously carried
    `password: "root"` in plaintext. Fixed 2026-08-25, and `config-repo`'s history was
    squashed to one commit before its first push, so the literal credential never reached
    GitHub at all. The `:root` default means local runs still need no env var. **Do not
    reintroduce a literal password** — `config-repo` is public, and history is forever once
    pushed. Phase 14 replaces the default with Secret Manager.
-8. **`java` on PATH is Java 8.** Use JDK 21: `JAVA_HOME=C:\Users\Karthik\.jdks\ms-21.0.12`.
+9. **`java` on PATH is Java 8.** Use JDK 21: `JAVA_HOME=C:\Users\Karthik\.jdks\ms-21.0.12`.
    `mvn` is not on PATH at all — use each module's `./mvnw`.
-9. **Both DBs share `localhost:3306`.** The design called for 3306/3307. Fine locally;
+10. **Both DBs share `localhost:3306`.** The design called for 3306/3307. Fine locally;
    Compose and the GCP data VM will split the schemas properly. Be honest about this.
-10. **Eureka registration lags roughly 40 s after boot** (client replication interval). An
+11. **Eureka registration lags roughly 40 s after boot** (client replication interval). An
     empty `/eureka/apps` immediately after startup is normal, not a failure.
-11. Maven needs network on first run — don't pass `-o`.
-12. `.idea/` is intentionally untracked; `.run/` is intentionally tracked.
-13. **The local toolchain for Part B does not exist yet.** No `gcloud`, `kubectl`, `docker`,
+12. Maven needs network on first run — don't pass `-o`.
+13. `.idea/` is intentionally untracked; `.run/` is intentionally tracked.
+14. **The local toolchain for Part B does not exist yet.** No `gcloud`, `kubectl`, `docker`,
     `helm` or `terraform` on this machine. Phase 12 installs them.
 
 ---
@@ -341,6 +370,52 @@ A 200 with **empty** `propertySources` means the filename doesn't match
 ## 10. Change log
 
 Newest first. Add an entry for every meaningful change.
+
+### 2026-08-25 — Moved to the `Ishita2803` GitHub account
+- Both repositories now live under **`github.com/Ishita2803/`**, and all commits are authored
+  by `Ishita Bhargava <68944355+Ishita2803@users.noreply.github.com>`. History in both repos
+  was rewritten so authorship is consistent throughout rather than split across two accounts.
+- The GitHub **noreply** address is used deliberately: `config-repo` is public and git history
+  is permanent, so a personal address committed once is exposed forever.
+- Identity is set **repo-locally**, not globally. `C:\Users\Karthik\.gitconfig` still says
+  `Karthik0770 <iyerkarthik07@gmail.com>`, so every other project on this machine is
+  unaffected. **A fresh clone will not inherit this** — re-run the two
+  `git config --local user.*` commands after cloning, or commits silently revert to the
+  global identity.
+- Updated in the same pass: `.gitmodules`, `CONFIG_REPO_URI` in `config-service`, and the URL
+  references in this file and `plan.md`.
+- The old repositories under `Karthik0770` were **left in place**, not deleted. If only one
+  copy should be discoverable, they need removing or making private by hand.
+- Known cosmetic wrinkle: the parent repo's pre-migration commits still record gitlinks
+  pointing at `config-repo` SHAs that no longer exist, because both histories were rewritten
+  independently. Checking out an old parent commit and running
+  `git submodule update` would fail. Current `HEAD` is correct, which is what matters.
+
+### 2026-08-25 — Phase 2 complete: the Order domain
+- `Order` / `OrderItem` / `OrderStatus` with repository, mapper, service, controller,
+  validation and a per-service exception handler. **25 tests, all green.**
+- **`orderId` is a server-minted UUID**, separate from the surrogate `id`, matching the
+  constraint Phase 1 imposed. `OrderResponse` never exposes the surrogate key, so this
+  service stays free to change it.
+- **Legal state transitions are encoded on the enum** (`canTransitionTo`, `isTerminal`)
+  rather than left to each caller. Terminal states accept nothing, which is what stops a
+  late or duplicated Kafka event in Phase 3 from reviving a cancelled order.
+- `OrderItem` carries `warehouseId`, because inventory keys reservations on
+  (orderId, productId, warehouseId). Without it the Phase 3 `OrderPlaced` event would not
+  contain enough information to reserve anything.
+- `createOrder` makes **no call to inventory-service**. Checking stock synchronously would
+  make accepting an order depend on another service being up — the exact coupling the
+  event-driven design exists to remove.
+- Money is `BigDecimal(19,2)` throughout, never `double`.
+- `GET /api/orders` is paged with the size capped at 100. An unbounded `findAll` is fine on
+  a demo and a way to exhaust heap on a real table.
+- **Verified end-to-end against real MySQL**, not just H2: `POST /api/orders` → 201, row
+  present in `order_db.orders` with `status=PENDING` and `total_amount=26.25`, both
+  `order_item` rows carrying the correct foreign key; `GET` by id → 200; negative line
+  quantity → 400 naming `items[0].quantity`; unknown id → 404.
+- Deliberately **deferred**: no `@Version` on `Order`. Concurrent status updates only become
+  possible once Kafka consumers exist, so the optimistic-locking machinery lands in Phase 4
+  with tests, rather than sitting here untested.
 
 ### 2026-08-25 — Phase 1 complete: order-scoped reservations, and proof they hold
 - **Added the `Reservation` entity**, the highest-leverage change in the project. Reserve and
@@ -388,7 +463,7 @@ Newest first. Add an entry for every meaningful change.
   Config Server is used in production, works from any clone, and needs no change in GKE.
   Side effect: the working-directory constraint that `.run/config-service.run.xml` existed
   to enforce is now irrelevant.
-- Created `github.com/Karthik0770/order-platform-config-repo` (public) and pushed
+- Created `github.com/Ishita2803/order-platform-config-repo` (public) and pushed
   `config-repo`'s squashed `master`.
 - **Verified from a fresh clone:** `/actuator/health` → `UP`; all four of order (8081),
   inventory (8082), notification (8083) and api-gateway (8080) return 200 with populated

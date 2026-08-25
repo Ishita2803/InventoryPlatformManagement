@@ -1,4 +1,4 @@
 [submodule "config-repo"]
 	path = config-repo
-	url = https://github.com/Karthik0770/order-platform-config-repo.git
+	url = https://github.com/Ishita2803/order-platform-config-repo.git
 	branch = master

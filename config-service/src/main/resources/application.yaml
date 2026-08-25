@@ -20,7 +20,7 @@ spring:
           #
           # This is also how Config Server is used in production, and it needs no change
           # when it runs as a pod in GKE.
-          uri: ${CONFIG_REPO_URI:https://github.com/Karthik0770/order-platform-config-repo.git}
+          uri: ${CONFIG_REPO_URI:https://github.com/Ishita2803/order-platform-config-repo.git}
           # config-repo's branch is `master`, not `main`. Spring Cloud Config defaults to
           # `main`, so this must stay explicit or lookups fail with "No such label".
           default-label: master

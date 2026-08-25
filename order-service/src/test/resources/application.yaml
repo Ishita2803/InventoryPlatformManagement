@@ -1,0 +1,33 @@
+# Test configuration.
+#
+# Shadows src/main/resources/application.yaml, which carries a non-optional
+# `spring.config.import: configserver:http://localhost:8888`. Without this shadow every test
+# would need Config Server and MySQL running. Tests must not depend on external
+# infrastructure.
+
+spring:
+  application:
+    name: order-service
+
+  cloud:
+    config:
+      enabled: false
+    discovery:
+      enabled: false
+
+  datasource:
+    url: jdbc:h2:mem:orders;DB_CLOSE_DELAY=-1;MODE=MySQL
+    driver-class-name: org.h2.Driver
+    username: sa
+    password: ""
+
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+    database-platform: org.hibernate.dialect.H2Dialect
+
+eureka:
+  client:
+    enabled: false
+    register-with-eureka: false
+    fetch-registry: false

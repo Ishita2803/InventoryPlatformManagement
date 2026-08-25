@@ -70,7 +70,7 @@ GCP plumbing, not about learning Docker under deadline.
 Phase 0's work had been sitting **entirely uncommitted** since 2026-08-21 — one careless
 `git checkout` from being lost.
 
-- [x] Created `https://github.com/Karthik0770/order-platform-config-repo` (public) and
+- [x] Created `https://github.com/Ishita2803/order-platform-config-repo` (public) and
       pushed `config-repo`'s `master`. The submodule URL had been a dead link.
 - [x] Squashed `config-repo`'s 9 commits into one before the first push, because
       `password: "root"` was in the earlier commits and scrubbing the working file does not
@@ -90,7 +90,7 @@ a real directory from the pre-submodule layout, so the platform "worked on this 
 and nowhere else — and Phase 15 would have hit the same wall inside GKE.
 
 Fixed by pointing `config-service` at the **remote** repository via
-`${CONFIG_REPO_URI:https://github.com/Karthik0770/order-platform-config-repo.git}` with
+`${CONFIG_REPO_URI:https://github.com/Ishita2803/order-platform-config-repo.git}` with
 `clone-on-start: true`.
 
 **Exit:** met. `git status` clean; from a throwaway clone, `config-service` reports `UP` and
@@ -126,21 +126,30 @@ The source conversation is explicit that reservation must be correct **before** 
 success while only 2 units are deducted), proving the test can actually detect overselling
 rather than passing vacuously.
 
-## Phase 2 — Order domain *(parallel with Phase 1)*
+## Phase 2 — Order domain ✅ *(done 2026-08-25)*
 
 > **Constraint inherited from Phase 1:** `Reservation.orderId` is a **String UUID**, because
 > a cross-service identifier travelling in Kafka events must not be another service's
 > auto-increment surrogate key. `Order` must therefore expose a UUID business identifier,
 > whatever it uses as its own primary key.
 
-- [ ] `Order`, `OrderItem`, `OrderStatus` (`PENDING`, `INVENTORY_RESERVED`,
-      `INVENTORY_FAILED`, `CONFIRMED`, `CANCELLED`)
-- [ ] Repository, service, DTOs, mapper, `GlobalExceptionHandler`, validation
-- [ ] `POST /api/orders`, `GET /api/orders/{id}`, `GET /api/orders`
-- [ ] Unit tests
-- [ ] **No Kafka in this phase**
+- [x] `Order`, `OrderItem`, `OrderStatus` (`PENDING`, `INVENTORY_RESERVED`,
+      `INVENTORY_FAILED`, `CONFIRMED`, `CANCELLED`), with **legal transitions encoded on the
+      enum** so a replayed event cannot revive a terminal order
+- [x] Repository, service, DTOs, mapper, `GlobalExceptionHandler`, validation
+- [x] `POST /api/orders`, `GET /api/orders/{orderId}`, `GET /api/orders` (paged, capped at 100)
+- [x] 25 tests: lifecycle rules, service behaviour, JPA mapping against a real database,
+      and the HTTP contract
+- [x] **No Kafka in this phase**
 
-**Exit:** `POST /api/orders` persists an order in `order_db` with status `PENDING`.
+**Deliberately deferred:** no `@Version` on `Order`. Concurrent status updates only become
+possible once Kafka consumers exist, so that machinery lands in Phase 4 *with* tests rather
+than sitting here untested.
+
+**Exit:** met, and verified against **real MySQL** rather than only H2. `POST /api/orders`
+→ 201; the row is present in `order_db.orders` with `status=PENDING` and
+`total_amount=26.25`; both `order_item` rows carry the correct foreign key; `GET` by id →
+200; a negative line quantity → 400 naming `items[0].quantity`; an unknown id → 404.
 
 ## Phase 3 — Kafka and the first async flow
 
