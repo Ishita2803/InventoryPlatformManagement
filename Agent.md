@@ -328,49 +328,56 @@ Ordered roughly by how much time each one costs when forgotten.
    Letting Hibernate derive the name emits `create table order (...)`, which MySQL rejects
    with a syntax error pointing at the wrong token entirely. `OrderPersistenceTest` is what
    would catch a regression here.
-7. **Never let the Kafka producer stamp Java type headers.** Event classes are duplicated
+7. **`ExponentialBackOffWithMaxRetries` no longer exists.** Spring Framework 7 folded it
+   into `ExponentialBackOff`, which now has `setMaxAttempts(long)` and built-in
+   `setJitter(long)`. Every Spring Kafka retry/DLT tutorial online still imports the old
+   class from `org.springframework.util.backoff`, and it will not resolve.
+8. **DLT payloads arrive JSON-encoded.** The producer's value serializer is `JsonSerializer`
+   and the republished value is already a `String`, so the DLT record is a quoted, escaped
+   JSON string rather than the raw bytes. Lossless but awkward — unescape once when reading.
+9. **Never let the Kafka producer stamp Java type headers.** Event classes are duplicated
    per service, so `spring.json.add.type.headers` must stay `false`. Left on, the producer
    writes `__TypeId__: com.demo.order_service.events.OrderPlacedEvent`, and the consumer —
    which only has `com.demo.inventory_service.events.OrderPlacedEvent` — fails to
    deserialize every single message. Consumers use `StringDeserializer` plus a
    `StringJsonMessageConverter` bean, which takes the target type from the
    `@KafkaListener` method parameter instead.
-8. **`*IT` classes do not run under `./mvnw test`.** Surefire only picks up `*Test`,
+10. **`*IT` classes do not run under `./mvnw test`.** Surefire only picks up `*Test`,
    `Test*`, `*Tests`, `*TestCase`. The integration tests are named `*IT` and run under
    **`./mvnw verify`** via failsafe. A green `test` run therefore proves *less* than it
    looks — check which plugin actually executed.
-9. **Tests must set `spring.kafka.admin.auto-create: false`.** Otherwise every
+11. **Tests must set `spring.kafka.admin.auto-create: false`.** Otherwise every
    `@SpringBootTest` spends ~45 s watching `KafkaAdmin` retry the `NewTopic` beans against
    a broker that is not running. It is not a failure, just a silent 10x slowdown.
-10. **Running Kafka on Windows without Docker:** the `bin/windows/*.bat` scripts die with
+12. **Running Kafka on Windows without Docker:** the `bin/windows/*.bat` scripts die with
     *"The input line is too long"* — the expanded classpath exceeds cmd's 8191-char limit
     under any deep path. Bypass them and let the JVM expand the wildcard itself:
     `java -cp "<kafka>/libs/*" kafka.Kafka <config>` (and `kafka.tools.StorageTool` to
     format KRaft storage first). Also avoid passing `-Dlog4j.configuration=` through
     PowerShell, which mangles it.
-11. **Spring Boot 4 moved the test-slice annotations.** They are no longer under
+13. **Spring Boot 4 moved the test-slice annotations.** They are no longer under
    `org.springframework.boot.test.autoconfigure.*`:
    - `@DataJpaTest` → `org.springframework.boot.data.jpa.test.autoconfigure`
    - `@WebMvcTest` → `org.springframework.boot.webmvc.test.autoconfigure`
 
    Every tutorial online still shows the Boot 3 packages, so the import will look right and
    fail to resolve. `@MockitoBean` (not `@MockBean`) is likewise the current spelling.
-12. **DB passwords are `${MYSQL_PASSWORD:root}` placeholders — keep them that way.**
+14. **DB passwords are `${MYSQL_PASSWORD:root}` placeholders — keep them that way.**
    `config-repo/order-service.yaml` and `inventory-service.yaml` previously carried
    `password: "root"` in plaintext. Fixed 2026-08-25, and `config-repo`'s history was
    squashed to one commit before its first push, so the literal credential never reached
    GitHub at all. The `:root` default means local runs still need no env var. **Do not
    reintroduce a literal password** — `config-repo` is public, and history is forever once
    pushed. Phase 14 replaces the default with Secret Manager.
-13. **`java` on PATH is Java 8.** Use JDK 21: `JAVA_HOME=C:\Users\Karthik\.jdks\ms-21.0.12`.
+15. **`java` on PATH is Java 8.** Use JDK 21: `JAVA_HOME=C:\Users\Karthik\.jdks\ms-21.0.12`.
    `mvn` is not on PATH at all — use each module's `./mvnw`.
-14. **Both DBs share `localhost:3306`.** The design called for 3306/3307. Fine locally;
+16. **Both DBs share `localhost:3306`.** The design called for 3306/3307. Fine locally;
    Compose and the GCP data VM will split the schemas properly. Be honest about this.
-15. **Eureka registration lags roughly 40 s after boot** (client replication interval). An
+17. **Eureka registration lags roughly 40 s after boot** (client replication interval). An
     empty `/eureka/apps` immediately after startup is normal, not a failure.
-16. Maven needs network on first run — don't pass `-o`.
-17. `.idea/` is intentionally untracked; `.run/` is intentionally tracked.
-18. **The local toolchain for Part B does not exist yet.** No `gcloud`, `kubectl`, `docker`,
+18. Maven needs network on first run — don't pass `-o`.
+19. `.idea/` is intentionally untracked; `.run/` is intentionally tracked.
+20. **The local toolchain for Part B does not exist yet.** No `gcloud`, `kubectl`, `docker`,
     `helm` or `terraform` on this machine. Phase 12 installs them.
 
 ---
@@ -403,6 +410,26 @@ A 200 with **empty** `propertySources` means the filename doesn't match
 ## 10. Change log
 
 Newest first. Add an entry for every meaningful change.
+
+### 2026-08-26 — Phase 4 complete: exactly-once effect, and a dead-letter topic
+- **`processed_event` table in both services**, `eventId` as primary key, written **in the
+  same transaction as the work it describes**. Before the work, a crash loses it; after, a
+  crash repeats it; together, at-least-once delivery becomes exactly-once *effect*.
+- **`reserveOrder` replaced the per-line reserve for the Kafka path.** It checks every line
+  before applying any, in one transaction, so a short line means nothing was reserved and
+  there is nothing to compensate for. Phase 3 reserved line-by-line then released on
+  failure, which left a window where stock was held for an order already doomed.
+- Idempotency is now belt and braces: the `processed_event` row keyed by `eventId`, and the
+  unique constraint on (orderId, productId, warehouseId) underneath it. The second survives
+  the publisher regenerating an `eventId`.
+- **DLT wired in both services** — 3 retries, exponential backoff with jitter, then
+  `<topic>.DLT`. Unparseable payloads are registered as **not retryable** so they go straight
+  to the DLT instead of burning six seconds first.
+- A **vacuous assertion was found and fixed**: the partial-order test asserted
+  `allSatisfy(RELEASED)` on what is now an empty list, so it passed while proving nothing.
+  It now asserts explicit emptiness.
+- 63 tests green (34 order-service, 29 inventory-service). Verified: a valid message queued
+  behind a poison one still gets processed — the failure this phase exists to prevent.
 
 ### 2026-08-26 — Phase 3 complete: the first async flow
 - `POST /api/orders` now drives a real round trip. Order publishes `OrderPlaced`; inventory

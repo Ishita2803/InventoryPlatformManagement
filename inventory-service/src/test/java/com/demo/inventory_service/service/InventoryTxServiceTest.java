@@ -13,6 +13,7 @@ import com.demo.inventory_service.models.Product;
 import com.demo.inventory_service.models.Reservation;
 import com.demo.inventory_service.models.ReservationStatus;
 import com.demo.inventory_service.repository.InventoryRepository;
+import com.demo.inventory_service.repository.ProcessedEventRepository;
 import com.demo.inventory_service.repository.ProductRepository;
 import com.demo.inventory_service.repository.ReservationRepository;
 import org.junit.jupiter.api.DisplayName;
@@ -56,6 +57,9 @@ class InventoryTxServiceTest {
 
     @Mock
     private ReservationRepository reservationRepository;
+
+    @Mock
+    private ProcessedEventRepository processedEventRepository;
 
     @InjectMocks
     private InventoryTxService txService;

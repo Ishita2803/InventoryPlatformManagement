@@ -3,7 +3,9 @@ package com.demo.inventory_service.service;
 import com.demo.inventory_service.dto.InventoryRequest;
 import com.demo.inventory_service.dto.InventoryResponse;
 import com.demo.inventory_service.dto.ProductRequest;
+import com.demo.inventory_service.dto.ReservationLine;
 import com.demo.inventory_service.dto.ReserveInventoryRequest;
+import com.demo.inventory_service.dto.ReserveOutcome;
 import com.demo.inventory_service.exception.ReservationConflictException;
 import com.demo.inventory_service.models.Product;
 import lombok.RequiredArgsConstructor;
@@ -60,6 +62,19 @@ public class InventoryService {
                 () -> tx.reserve(request),
                 "reserve orderId=" + request.getOrderId()
                         + " productId=" + request.getProductId()
+        );
+    }
+
+    /**
+     * Reserves a whole order exactly once, retrying the entire transaction on contention.
+     *
+     * <p>The retry wraps the complete unit of work, so a losing attempt re-reads every line
+     * rather than re-applying part of a stale snapshot.
+     */
+    public ReserveOutcome reserveOrder(String eventId, String orderId, List<ReservationLine> lines) {
+        return withOptimisticLockRetry(
+                () -> tx.reserveOrder(eventId, orderId, lines),
+                "reserveOrder orderId=" + orderId + " eventId=" + eventId
         );
     }
 

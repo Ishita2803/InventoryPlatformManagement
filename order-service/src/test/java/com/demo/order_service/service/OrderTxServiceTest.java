@@ -9,7 +9,9 @@ import com.demo.order_service.mapper.OrderMapper;
 import com.demo.order_service.models.Order;
 import com.demo.order_service.models.OrderItem;
 import com.demo.order_service.models.OrderStatus;
+import com.demo.order_service.models.ProcessedEvent;
 import com.demo.order_service.repository.OrderRepository;
+import com.demo.order_service.repository.ProcessedEventRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -26,6 +28,8 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -35,13 +39,16 @@ class OrderTxServiceTest {
     @Mock
     private OrderRepository orderRepository;
 
+    @Mock
+    private ProcessedEventRepository processedEventRepository;
+
     private OrderTxService orderTxService;
 
     @BeforeEach
     void setUp() {
         // The real mapper, not a mock: it owns the UUID minting and the money arithmetic,
         // which are exactly the behaviours these tests are about.
-        orderTxService = new OrderTxService(orderRepository, new OrderMapper());
+        orderTxService = new OrderTxService(orderRepository, new OrderMapper(), processedEventRepository);
     }
 
     @Test
@@ -131,6 +138,37 @@ class OrderTxServiceTest {
         assertThat(order.getStatus())
                 .as("a rejected transition must leave the order untouched")
                 .isEqualTo(OrderStatus.CANCELLED);
+    }
+
+    @Test
+    @DisplayName("an inventory result is applied once and the event recorded in the same go")
+    void inventoryResultIsAppliedAndRecorded() {
+
+        Order order = existingOrder(OrderStatus.PENDING);
+        when(processedEventRepository.existsById("evt-1")).thenReturn(false);
+        when(orderRepository.findByOrderId(order.getOrderId())).thenReturn(Optional.of(order));
+
+        boolean applied = orderTxService.applyInventoryResult(
+                "evt-1", "InventoryReserved", order.getOrderId(), OrderStatus.INVENTORY_RESERVED);
+
+        assertThat(applied).isTrue();
+        assertThat(order.getStatus()).isEqualTo(OrderStatus.INVENTORY_RESERVED);
+        verify(processedEventRepository).save(any(ProcessedEvent.class));
+    }
+
+    @Test
+    @DisplayName("a replayed event is skipped: the order is not touched a second time")
+    void replayedEventIsSkipped() {
+
+        when(processedEventRepository.existsById("evt-1")).thenReturn(true);
+
+        boolean applied = orderTxService.applyInventoryResult(
+                "evt-1", "InventoryReserved", "any-order", OrderStatus.INVENTORY_RESERVED);
+
+        assertThat(applied).isFalse();
+        // Never even loads the order, let alone changes it.
+        verify(orderRepository, never()).findByOrderId(anyString());
+        verify(processedEventRepository, never()).save(any(ProcessedEvent.class));
     }
 
     private CreateOrderRequest request() {

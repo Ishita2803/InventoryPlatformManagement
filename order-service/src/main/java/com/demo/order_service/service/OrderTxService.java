@@ -5,8 +5,10 @@ import com.demo.order_service.dto.OrderResponse;
 import com.demo.order_service.exception.OrderNotFoundException;
 import com.demo.order_service.mapper.OrderMapper;
 import com.demo.order_service.models.Order;
+import com.demo.order_service.models.ProcessedEvent;
 import com.demo.order_service.models.OrderStatus;
 import com.demo.order_service.repository.OrderRepository;
+import com.demo.order_service.repository.ProcessedEventRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Pageable;
@@ -30,6 +32,7 @@ public class OrderTxService {
 
     private final OrderRepository orderRepository;
     private final OrderMapper orderMapper;
+    private final ProcessedEventRepository processedEventRepository;
 
     @Transactional
     public OrderResponse create(CreateOrderRequest request) {
@@ -65,6 +68,36 @@ public class OrderTxService {
         log.info("Order {} moved to {}", orderId, target);
 
         return orderMapper.toResponse(order);
+    }
+
+    /**
+     * Applies an inventory result to an order, exactly once.
+     *
+     * <p>The {@code processed_event} row and the status change are written in the <em>same
+     * transaction</em>. That is the entire trick: they commit together or not at all, so a
+     * crash can never leave the event marked handled while the order stayed put, nor the
+     * order advanced with no record that the event was consumed. Redelivery then finds the
+     * row and does nothing.
+     *
+     * @return true if this delivery did the work, false if it was a duplicate
+     */
+    @Transactional
+    public boolean applyInventoryResult(String eventId, String eventType,
+                                        String orderId, OrderStatus target) {
+
+        if (processedEventRepository.existsById(eventId)) {
+            log.info("Event {} already applied to order {} -- skipping", eventId, orderId);
+            return false;
+        }
+
+        processedEventRepository.save(new ProcessedEvent(eventId, eventType));
+
+        Order order = loadOrder(orderId);
+        order.transitionTo(target);
+
+        log.info("Order {} moved to {} by event {}", orderId, target, eventId);
+
+        return true;
     }
 
     private Order loadOrder(String orderId) {

@@ -184,15 +184,34 @@ with **no** reservation row and stock untouched.
 Automated proof: 8 integration tests against an embedded broker (4 per service), covering
 publish, both result paths, partial-order compensation, and duplicate delivery.
 
-## Phase 4 — Saga correctness
+## Phase 4 — Saga correctness ✅ *(done 2026-08-26)*
 
-- [ ] `processed_events` table + idempotent consumer (straightforward now that
-      reservations are keyed by `orderId`)
-- [ ] Bounded retry + `DeadLetterPublishingRecoverer` → `order.placed.DLT`
-- [ ] Compensating release when a downstream step fails
+- [x] `processed_event` table in **both** services, `eventId` as the primary key, written
+      **in the same transaction as the work it describes**. That is the whole mechanism:
+      written before, a crash loses the work; written after, a crash repeats it; written
+      together, at-least-once delivery becomes exactly-once *effect*.
+- [x] Bounded retry (3 attempts, exponential backoff **with jitter**) plus
+      `DeadLetterPublishingRecoverer` → `<topic>.DLT`. Unparseable payloads are marked
+      **not retryable** and go straight to the DLT rather than burning six seconds first.
+- [x] Compensation: no longer needed for a partly-fulfillable order — see below
 
-**Exit:** replaying the same `OrderPlaced` twice reserves stock exactly once; a poisoned
-message lands in the DLT instead of looping forever.
+**The design changed, for the better.** `reserveOrder` now checks *every* line before
+applying *any*, all in one transaction. So a short line means nothing was reserved at all,
+and there is nothing to compensate for. Phase 3 reserved line-by-line and released on
+failure, which left a window where stock was held for an order already doomed to fail. The
+order-scoped `releaseInventory` remains — Phase 8 needs it when *payment* fails, which is a
+genuinely downstream failure rather than an in-flight one.
+
+Idempotency is now belt **and** braces: the `processed_event` row keyed by `eventId`, and
+the unique constraint on (orderId, productId, warehouseId) underneath it. The second
+survives the publisher regenerating an `eventId`; the first is what a general consumer needs
+when its work has no such natural key.
+
+**Exit:** met. Replaying the same `OrderPlaced` reserves stock exactly once and leaves
+exactly one `processed_event` row. A malformed payload lands in `order.placed.DLT` with the
+failure reason in its headers, and — separately asserted — **a valid message queued behind
+a poison one is still processed**, which is the failure this phase actually exists to
+prevent.
 
 ## Phase 5 — Transactional Outbox (Order Service)
 

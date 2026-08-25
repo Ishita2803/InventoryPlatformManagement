@@ -28,7 +28,8 @@ public class InventoryResultListener {
         log.info("Received InventoryReserved eventId={} orderId={}",
                 event.eventId(), event.orderId());
 
-        apply(event.orderId(), OrderStatus.INVENTORY_RESERVED);
+        apply(event.eventId(), "InventoryReserved", event.orderId(),
+                OrderStatus.INVENTORY_RESERVED);
     }
 
     @KafkaListener(topics = KafkaTopics.INVENTORY_FAILED, groupId = "order-service")
@@ -37,33 +38,46 @@ public class InventoryResultListener {
         log.info("Received InventoryFailed eventId={} orderId={} reason={}",
                 event.eventId(), event.orderId(), event.reason());
 
-        apply(event.orderId(), OrderStatus.INVENTORY_FAILED);
+        apply(event.eventId(), "InventoryFailed", event.orderId(),
+                OrderStatus.INVENTORY_FAILED);
     }
 
     /**
-     * Applies a status change, treating "already applied" as success.
+     * Applies a status change exactly once.
      *
-     * <p>Kafka delivery is at-least-once, so the same event can arrive twice. The second
-     * delivery finds the order already in the target state and
-     * {@link InvalidOrderStateTransitionException} is thrown by the lifecycle guard. That is
-     * not a failure worth retrying — the work is done — so it is logged and acknowledged.
-     * Retrying it would loop forever and eventually poison the partition.
+     * <p>Duplicates are caught by the {@code processed_event} row, which is written in the
+     * same transaction as the status change. The two exceptions below are then genuinely
+     * exceptional rather than routine:
      *
-     * <p>This is duplicate <em>tolerance</em>, not real idempotency: it works because the
-     * transitions happen to be one-way. Phase 4 adds a {@code processed_events} table so
-     * duplicates are recognised by {@code eventId} rather than inferred from the outcome.
+     * <ul>
+     *   <li>{@link InvalidOrderStateTransitionException} — a <em>different</em> event tried
+     *       an illegal move, for example a stale InventoryReserved arriving after the order
+     *       was cancelled. Nothing to retry; the order's current state is the right one.</li>
+     *   <li>{@link OrderNotFoundException} — inventory answered about an order this service
+     *       never wrote. Retrying cannot conjure it up.</li>
+     * </ul>
+     *
+     * <p>Both are swallowed deliberately: rethrowing would hand them to the error handler,
+     * which would retry three times and then dead-letter a message that is not actually
+     * broken. Anything else — a database outage, say — <em>does</em> propagate, and that is
+     * what the retry and DLT exist for.
      */
-    private void apply(String orderId, OrderStatus target) {
+    private void apply(String eventId, String eventType, String orderId, OrderStatus target) {
 
         try {
-            orderTxService.transitionOrder(orderId, target);
+            boolean applied = orderTxService.applyInventoryResult(
+                    eventId, eventType, orderId, target);
 
-        } catch (InvalidOrderStateTransitionException alreadyApplied) {
-            log.warn("Ignoring event for order {}: {}", orderId, alreadyApplied.getMessage());
+            if (!applied) {
+                log.info("Duplicate delivery of event {} for order {} — ignored",
+                        eventId, orderId);
+            }
+
+        } catch (InvalidOrderStateTransitionException illegalMove) {
+            log.warn("Ignoring event {} for order {}: {}",
+                    eventId, orderId, illegalMove.getMessage());
 
         } catch (OrderNotFoundException unknown) {
-            // Genuinely unexpected: inventory answered about an order this service never
-            // wrote. Logged loudly rather than retried, since retrying cannot conjure it up.
             log.error("Received an inventory result for unknown order {}", orderId, unknown);
         }
     }

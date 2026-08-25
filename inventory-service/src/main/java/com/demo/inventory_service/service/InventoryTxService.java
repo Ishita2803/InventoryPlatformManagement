@@ -3,16 +3,20 @@ package com.demo.inventory_service.service;
 import com.demo.inventory_service.dto.InventoryRequest;
 import com.demo.inventory_service.dto.InventoryResponse;
 import com.demo.inventory_service.dto.ProductRequest;
+import com.demo.inventory_service.dto.ReservationLine;
 import com.demo.inventory_service.dto.ReserveInventoryRequest;
+import com.demo.inventory_service.dto.ReserveOutcome;
 import com.demo.inventory_service.exception.DuplicateSkuException;
 import com.demo.inventory_service.exception.InsufficientInventoryException;
 import com.demo.inventory_service.exception.InventoryNotFoundException;
 import com.demo.inventory_service.exception.ProductNotFoundException;
 import com.demo.inventory_service.models.Inventory;
 import com.demo.inventory_service.models.Product;
+import com.demo.inventory_service.models.ProcessedEvent;
 import com.demo.inventory_service.models.Reservation;
 import com.demo.inventory_service.models.ReservationStatus;
 import com.demo.inventory_service.repository.InventoryRepository;
+import com.demo.inventory_service.repository.ProcessedEventRepository;
 import com.demo.inventory_service.repository.ProductRepository;
 import com.demo.inventory_service.repository.ReservationRepository;
 import lombok.RequiredArgsConstructor;
@@ -44,6 +48,7 @@ public class InventoryTxService {
     private final ProductRepository productRepository;
     private final InventoryRepository inventoryRepository;
     private final ReservationRepository reservationRepository;
+    private final ProcessedEventRepository processedEventRepository;
 
     @Transactional
     public Product createProduct(ProductRequest request) {
@@ -154,6 +159,105 @@ public class InventoryTxService {
         reservationRepository.saveAndFlush(reservation);
 
         return toResponse(inventory);
+    }
+
+    /**
+     * Reserves every line of one order, atomically and exactly once.
+     *
+     * <p>This is the Phase 4 entry point, and it differs from {@link #reserve} in three ways
+     * that matter:
+     *
+     * <ol>
+     *   <li><strong>Idempotent by event.</strong> The {@code processed_event} row is written
+     *       in this same transaction, so the record of having handled the event and the
+     *       effects of handling it commit or roll back together. A redelivery finds the row
+     *       and does nothing.</li>
+     *   <li><strong>All-or-nothing.</strong> Every line is checked before any line is
+     *       applied. If one line is short, the method returns FAILED having mutated no
+     *       stock at all — so there is nothing to compensate for. The previous
+     *       reserve-then-release-on-failure dance is gone, along with the window where
+     *       stock sat reserved for an order that was about to be rejected.</li>
+     *   <li><strong>One transaction.</strong> The caller retries the whole thing on an
+     *       optimistic-lock clash, so a losing attempt re-reads every row rather than
+     *       retrying one line against a stale snapshot of the others.</li>
+     * </ol>
+     *
+     * <p>Note the belt and braces: even if the {@code eventId} changes between deliveries —
+     * which it would if the publisher regenerated it — the unique constraint on
+     * (orderId, productId, warehouseId) still prevents double reservation. Event-level
+     * idempotency is convenient; the business constraint is the one that cannot be fooled.
+     */
+    @Transactional
+    public ReserveOutcome reserveOrder(String eventId, String orderId, List<ReservationLine> lines) {
+
+        if (processedEventRepository.existsById(eventId)) {
+            return ReserveOutcome.alreadyProcessed();
+        }
+
+        // Written first so the primary key rejects a concurrent duplicate immediately, but
+        // committed only with everything below it.
+        processedEventRepository.save(new ProcessedEvent(eventId, "OrderPlaced"));
+
+        // Phase 1 -- look everything up and check it. Nothing is mutated here, so returning
+        // early leaves stock exactly as it was.
+        List<Inventory> loaded = new ArrayList<>(lines.size());
+
+        for (ReservationLine line : lines) {
+
+            Inventory inventory;
+            try {
+                inventory = loadInventory(line.productId(), line.warehouseId());
+            } catch (InventoryNotFoundException missing) {
+                return ReserveOutcome.failed(missing.getMessage());
+            }
+
+            if (inventory.getAvailableQuantity() < line.quantity()) {
+                return ReserveOutcome.failed(
+                        "Insufficient inventory for productId=" + line.productId()
+                                + ", warehouseId=" + line.warehouseId()
+                                + ". Available=" + inventory.getAvailableQuantity()
+                                + ", requested=" + line.quantity());
+            }
+
+            loaded.add(inventory);
+        }
+
+        // Phase 2 -- apply. Every line is known to be satisfiable at this point.
+        for (int i = 0; i < lines.size(); i++) {
+
+            ReservationLine line = lines.get(i);
+            Inventory inventory = loaded.get(i);
+
+            boolean alreadyHeld = reservationRepository
+                    .findByOrderIdAndProductIdAndWarehouseId(
+                            orderId, line.productId(), line.warehouseId())
+                    .isPresent();
+
+            if (alreadyHeld) {
+                // Same order, different eventId. The constraint would reject the insert;
+                // skipping keeps the operation idempotent instead of failing the batch.
+                continue;
+            }
+
+            inventory.setAvailableQuantity(inventory.getAvailableQuantity() - line.quantity());
+            inventory.setReservedQuantity(inventory.getReservedQuantity() + line.quantity());
+            inventoryRepository.save(inventory);
+
+            Reservation reservation = new Reservation();
+            reservation.setOrderId(orderId);
+            reservation.setProductId(line.productId());
+            reservation.setWarehouseId(line.warehouseId());
+            reservation.setQuantity(line.quantity());
+            reservation.setStatus(ReservationStatus.RESERVED);
+            reservationRepository.save(reservation);
+        }
+
+        // Forces the @Version check and the unique constraint to fire here, inside the
+        // caller's retry, rather than at commit where the retry can no longer help.
+        inventoryRepository.flush();
+        reservationRepository.flush();
+
+        return ReserveOutcome.reserved();
     }
 
     /**

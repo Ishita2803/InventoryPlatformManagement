@@ -1,12 +1,11 @@
 package com.demo.inventory_service.kafka;
 
-import com.demo.inventory_service.dto.ReserveInventoryRequest;
+import com.demo.inventory_service.dto.ReservationLine;
+import com.demo.inventory_service.dto.ReserveOutcome;
 import com.demo.inventory_service.events.InventoryFailedEvent;
 import com.demo.inventory_service.events.InventoryReservedEvent;
 import com.demo.inventory_service.events.KafkaTopics;
 import com.demo.inventory_service.events.OrderPlacedEvent;
-import com.demo.inventory_service.exception.InsufficientInventoryException;
-import com.demo.inventory_service.exception.InventoryNotFoundException;
 import com.demo.inventory_service.service.InventoryService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -15,10 +14,15 @@ import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Component;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.UUID;
 
 /**
  * Reserves stock for an incoming order and reports the outcome.
+ *
+ * <p>The listener itself is thin on purpose: all the atomicity and idempotency lives in
+ * {@code InventoryTxService.reserveOrder}, in one transaction. This method only decides
+ * which event to publish.
  */
 @Component
 @RequiredArgsConstructor
@@ -34,37 +38,32 @@ public class OrderPlacedListener {
         log.info("Received OrderPlaced eventId={} orderId={} lines={}",
                 event.eventId(), event.orderId(), event.lines().size());
 
-        try {
-            for (OrderPlacedEvent.Line line : event.lines()) {
-                inventoryService.reserveInventory(toRequest(event.orderId(), line));
+        List<ReservationLine> lines = event.lines().stream()
+                .map(line -> new ReservationLine(
+                        line.productId(), line.warehouseId(), line.quantity()))
+                .toList();
+
+        ReserveOutcome outcome =
+                inventoryService.reserveOrder(event.eventId(), event.orderId(), lines);
+
+        switch (outcome.status()) {
+
+            case RESERVED -> publishReserved(event.orderId());
+
+            case FAILED -> {
+                // Nothing was reserved -- reserveOrder checks every line before applying
+                // any -- so there is nothing to compensate for here.
+                log.warn("Cannot reserve order {}: {}", event.orderId(), outcome.reason());
+                publishFailed(event.orderId(), outcome.reason());
             }
 
-            publishReserved(event.orderId());
-
-        } catch (InsufficientInventoryException | InventoryNotFoundException failure) {
-
-            // An order is all-or-nothing. If line three has no stock, lines one and two are
-            // already reserved and must be handed back, or that stock is leaked until
-            // someone notices. Release is order-scoped precisely so this is one call, and it
-            // is a no-op when nothing was reserved.
-            log.warn("Cannot reserve order {}: {}. Releasing anything already held.",
-                    event.orderId(), failure.getMessage());
-
-            inventoryService.releaseInventory(event.orderId());
-
-            publishFailed(event.orderId(), failure.getMessage());
+            case ALREADY_PROCESSED -> {
+                // A redelivery. The first delivery already published a result, so publishing
+                // again would only give downstream a duplicate to discard.
+                log.info("Skipping already-processed event {} for order {}",
+                        event.eventId(), event.orderId());
+            }
         }
-    }
-
-    private ReserveInventoryRequest toRequest(String orderId, OrderPlacedEvent.Line line) {
-
-        ReserveInventoryRequest request = new ReserveInventoryRequest();
-        request.setOrderId(orderId);
-        request.setProductId(line.productId());
-        request.setWarehouseId(line.warehouseId());
-        request.setQuantity(line.quantity());
-
-        return request;
     }
 
     private void publishReserved(String orderId) {

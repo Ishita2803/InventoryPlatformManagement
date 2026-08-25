@@ -7,6 +7,7 @@ import com.demo.inventory_service.models.Product;
 import com.demo.inventory_service.models.Reservation;
 import com.demo.inventory_service.models.ReservationStatus;
 import com.demo.inventory_service.repository.InventoryRepository;
+import com.demo.inventory_service.repository.ProcessedEventRepository;
 import com.demo.inventory_service.repository.ProductRepository;
 import com.demo.inventory_service.repository.ReservationRepository;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -70,6 +71,9 @@ class OrderPlacedListenerIT {
     @Autowired
     private ReservationRepository reservationRepository;
 
+    @Autowired
+    private ProcessedEventRepository processedEventRepository;
+
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     private Long productId;
@@ -77,6 +81,7 @@ class OrderPlacedListenerIT {
 
     @BeforeEach
     void setUp() {
+        processedEventRepository.deleteAll();
         reservationRepository.deleteAll();
         inventoryRepository.deleteAll();
         productRepository.deleteAll();
@@ -154,8 +159,8 @@ class OrderPlacedListenerIT {
     }
 
     @Test
-    @DisplayName("a partly-fulfillable order reserves nothing: the good line is released again")
-    void releasesEarlierLinesWhenALaterOneFails() {
+    @DisplayName("a partly-fulfillable order reserves nothing at all, so there is nothing to undo")
+    void reservesNothingWhenAnyLineIsShort() {
 
         // Second product, deliberately understocked.
         Product scarce = new Product();
@@ -185,15 +190,23 @@ class OrderPlacedListenerIT {
         JsonNode result = awaitEventFor(orderId);
         assertThat(result.get("topic").asText()).isEqualTo(KafkaTopics.INVENTORY_FAILED);
 
-        // The whole point: the first line was reserved, then handed back. Leaking it would
-        // make the stock permanently unavailable for an order that never happened.
+        // Since Phase 4 every line is checked before any line is applied, so the satisfiable
+        // first line is never reserved in the first place. Previously it was reserved and
+        // then released, which left a window where stock was held for an order already
+        // doomed to fail.
         Inventory first = inventoryRepository
                 .findByProductIdAndWarehouseId(productId, WAREHOUSE_ID).orElseThrow();
         assertThat(first.getAvailableQuantity()).isEqualTo(10);
         assertThat(first.getReservedQuantity()).isZero();
 
+        // Explicitly empty, not "all rows are RELEASED" -- that assertion would pass
+        // vacuously on an empty list and prove nothing.
         assertThat(reservationRepository.findByOrderId(orderId))
-                .allSatisfy(r -> assertThat(r.getStatus()).isEqualTo(ReservationStatus.RELEASED));
+                .as("no reservation should have been created for any line")
+                .isEmpty();
+
+        // The event still counts as handled, so a redelivery will not retry it.
+        assertThat(processedEventRepository.findAll()).hasSize(1);
     }
 
     @Test
@@ -214,6 +227,16 @@ class OrderPlacedListenerIT {
                 .findByProductIdAndWarehouseId(productId, WAREHOUSE_ID).orElseThrow();
         assertThat(current.getAvailableQuantity()).isEqualTo(6);
         assertThat(current.getReservedQuantity()).isEqualTo(4);
+
+        // And the mechanism itself, not just its effect: exactly one processed_event row,
+        // written in the same transaction as the reservation.
+        assertThat(processedEventRepository.findAll())
+                .as("the event should be recorded exactly once")
+                .singleElement()
+                .satisfies(processed -> {
+                    assertThat(processed.getEventId()).isEqualTo(event.eventId());
+                    assertThat(processed.getEventType()).isEqualTo("OrderPlaced");
+                });
     }
 
     private OrderPlacedEvent orderPlaced(String orderId, int quantity) {
