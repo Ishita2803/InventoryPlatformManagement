@@ -158,6 +158,15 @@ written to `outbox_event` in the *same* transaction as the business change. Eith
 committed or neither is. A separate poller publishes committed rows and marks them sent, so a
 crash between commit and publish just means the row is published after restart.
 
+**Work that silently never finished.** Idempotency guarantees work is not done *twice*, and
+says nothing about work that was never *completed*. If a consumer's `processed_event` row
+commits and the settlement then fails, redelivery correctly skips the event and the order
+stalls for ever holding stock. Separately, anything that exhausts its retries lands in a
+dead-letter topic that nothing reads. Two scheduled jobs close both: one sweeps orders stalled
+past a threshold and re-drives settlement, the other replays dead-lettered settlements. Both
+are safe to run repeatedly — see
+[ADR-0008](docs/decisions/0008-reconcile-state-not-messages.md).
+
 **Two orders race for the last unit.** The `inventory` row carries a `@Version` column.
 The loser's `UPDATE ... WHERE version = ?` matches no rows, Hibernate throws, and the
 operation is retried — outside the transaction, with bounded jittered backoff — against
@@ -173,6 +182,7 @@ oversells.
 | No distributed transaction across services | Choreographed saga with explicit compensation | `order.cancelled` handler |
 | Concurrent stock updates | `@Version` optimistic lock + retry outside the transaction | `InventoryService` / `InventoryTxService` |
 | A downstream dependency is down | Resilience4j retry → circuit breaker → fallback | `PaymentClient` |
+| Work that silently never finished | State-based reconciliation + dead-letter replay | `OrderReconciliationService`, `SettlementRecoveryService` |
 
 ## Running it
 
@@ -284,11 +294,11 @@ PENDING ──► INVENTORY_RESERVED ──► CONFIRMED
 
 ## Testing
 
-**101 tests** across the five application modules — 51 order, 33 inventory, 6 notification,
-6 gateway, 5 payment. **43 of them are integration tests** against an embedded Kafka broker, a
+**117 tests** across the five application modules — 62 order, 38 inventory, 6 notification,
+6 gateway, 5 payment. **48 of them are integration tests** against an embedded Kafka broker, a
 real MySQL 8 container, or a real HTTP server.
 
-CI reports **103**, because `config-service` and `discovery-service` each contribute a
+CI reports **119**, because `config-service` and `discovery-service` each contribute a
 context-load smoke test on top.
 
 ```bash
@@ -345,6 +355,7 @@ rejected and why:
 | [ADR-0005](docs/decisions/0005-per-service-event-classes.md) | Duplicated event classes instead of a shared library |
 | [ADR-0006](docs/decisions/0006-mock-payment-service.md) | A real HTTP payment service, mocked internally |
 | [ADR-0007](docs/decisions/0007-gateway-mvc-over-webflux.md) | Spring Cloud Gateway MVC rather than WebFlux |
+| [ADR-0008](docs/decisions/0008-reconcile-state-not-messages.md) | Reconcile persisted state, because replaying messages cannot fix everything |
 
 Longer narrative context lives in [`Agent.md`](Agent.md) (full project state, including a
 numbered list of every trap hit along the way) and [`plan.md`](plan.md) (the phased plan).
@@ -354,11 +365,12 @@ numbered list of every trap hit along the way) and [`plan.md`](plan.md) (the pha
 
 Listed deliberately, because a portfolio project that claims everything is worth nothing.
 
-- **No reconciliation job.** This is the real known gap. If a consumer commits its
-  `processed_event` row and the settlement then fails, the order can stay in
-  `INVENTORY_RESERVED` for ever, holding stock — and it is not theoretical, it happened during
-  development and stranded 6 units across 3 orders. A sweeper for stale reservations is the
-  next correctness item.
+- **Confirm and release still use optimistic locking where an atomic `UPDATE` would do.**
+  They are pure relative adjustments (`reserved -= n`), so a single conditional UPDATE would
+  have no contention failure mode at all. Today they read-modify-write with a bounded retry,
+  and under heavy single-row contention that budget can be exhausted — which is exactly what
+  dead-lettered 9 confirmations during benchmarking. Reconciliation recovers them, but not
+  having to is better.
 - **No authentication or authorisation.** Every endpoint is open.
 - **No Kubernetes or cloud deployment yet.** Compose only. GKE, Secret Manager and a MySQL VM
   are planned in `plan.md` Part B.

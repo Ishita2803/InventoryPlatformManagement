@@ -510,6 +510,30 @@ esourcesin\docker.exe` or start a new shell.
     `cancel-in-progress`, a late push run carrying an *older* commit will cancel a dispatch
     run carrying the fix, which looks exactly like the fix failing.
 
+43. **A dead-letter topic that nothing reads is a stock leak.** DLTs stop a poison message
+    blocking a partition, and then silently keep whatever lands in them for ever. This project
+    ran with write-only DLTs from Phase 4 to Phase 11.5 and lost 9 units of stock to it.
+    Something must drain them. Use a **scheduled drain, not a `@KafkaListener` on the DLT** —
+    a listener re-consumes milliseconds after the failure, while the cause is still present,
+    and hot-loops.
+44. **Idempotency cannot detect unfinished work.** `processed_event` guarantees work is not
+    done twice and says nothing about work that was never completed. If the marker ever
+    commits without the work, it becomes a lie that suppresses every future attempt. The only
+    cure is reconciliation over **state**, because the message layer has already reached its
+    correct terminal decision.
+45. **A bounded optimistic-lock retry drops work under sustained single-row contention.**
+    200 orders against one product exhausted a 4-attempt budget on 9 confirmations. Raising
+    the budget only moves the threshold. For operations that are pure relative adjustments —
+    `reserved -= n` — a single atomic `UPDATE` has no contention failure mode at all and is
+    the right tool; optimistic locking is for check-then-act, like `reserve`.
+46. **Cross-service drift is invisible from inside the message flow.** No error, no alert, no
+    failed request — order-service said CONFIRMED and inventory said RESERVED, and both were
+    internally consistent. It surfaces only by comparing state across services and asking
+    whether both numbers can be true. Worth doing deliberately after any load test.
+47. **`KafkaProperties` relocated in Spring Boot 4** — no longer in
+    `org.springframework.boot.autoconfigure.kafka`. If one value is needed, read the property
+    with `@Value("${spring.kafka.bootstrap-servers}")` rather than chasing the new package.
+
 ## 9. Startup order and verification (local)
 
 ```
@@ -538,6 +562,45 @@ A 200 with **empty** `propertySources` means the filename doesn't match
 ## 10. Change log
 
 Newest first. Add an entry for every meaningful change.
+
+### 2026-08-26 — Phase 11.5 complete: reconciliation, on both sides
+- **`OrderReconciliationService`** (order-service) sweeps orders stuck at
+  `INVENTORY_RESERVED` past a threshold and re-drives settlement. It never touches
+  `processed_event` — it re-runs the *settlement* transaction, which was never marked done.
+  Closes the gap flagged since Phase 4 and proven real in Phase 8.
+- **`OrderSettlementService`** extracted from `InventoryResultListener.settle(...)`. The
+  listener and the sweeper must behave identically; two copies would have drifted silently.
+  Two entry points differing only in policy: `settleCancellingOnOutage` (listener — a customer
+  is waiting) and `settle` (sweeper — an outage must not cancel a backlog).
+- **`@Version` added to `Order`**, deferred since Phase 2 on the explicit grounds that
+  concurrent updates were not yet possible. The sweeper is a second writer on a timer, so they
+  are now.
+- **A SECOND leak, found by looking at the live database rather than by reasoning.** All 1608
+  orders read `CONFIRMED`, yet 9 units were still reserved. The outbox showed all 1608
+  `order.confirmed` events PUBLISHED. `order.confirmed.DLT` held exactly 9 records, and their
+  headers gave the cause: `ReservationConflictException: ... after 4 attempts due to concurrent
+  modification`. Benchmark run 1's 200 orders against a single product exhausted the
+  optimistic-lock retry budget on 9 confirmations; the error handler retried 3× and gave up.
+  **Nothing in this system ever read a dead-letter topic** — they were write-only.
+- **`SettlementRecoveryService`** (inventory-service) drains `order.confirmed.DLT` and
+  `order.cancelled.DLT` on a timer and re-applies them. Safe because `confirmByOrderId` and
+  `releaseByOrderId` both filter `WHERE status = RESERVED`, so a replay matches no rows.
+  A scheduled drain, deliberately not a `@KafkaListener` on the DLT — a listener would
+  re-consume milliseconds after the failure, while the contention causing it is still there.
+  Required `@EnableScheduling` on `InventoryServiceApplication` (it had none).
+- **Verified against the real data, not only tests.** One sweep:
+  `examined=9 confirmed=9 released=0 failed=0`. After it, `orders CONFIRMED` = 1608 and
+  `reservations CONFIRMED` = 1608, `SUM(reserved_quantity)` = 0, recovery consumer-group
+  lag 0.
+- **Mutation-tested.** Neutering the sweep fails 7 of 11 order-side tests; making it cancel on
+  a payment outage fails exactly 1 — `outageDoesNotCancel`, the test written for that policy.
+- **Test counts:** order 51 -> 62, inventory 33 -> 38. Five app modules **117**; CI **119**.
+- **Known and deliberately not fixed:** confirm/release are pure relative adjustments
+  (`reserved -= n`) and could be one atomic conditional `UPDATE` with no contention failure
+  mode at all. That is the better fix. Reconciliation makes the symptom recoverable rather
+  than making it stop happening. Recorded in ADR-0008 and the README's "not built" list.
+- **`KafkaProperties` moved in Boot 4** out of `org.springframework.boot.autoconfigure.kafka`.
+  `SettlementRecoveryService` reads `${spring.kafka.bootstrap-servers}` via `@Value` instead.
 
 ### 2026-08-26 — CI actually run for the first time; two real bugs fixed
 - The `workflow` OAuth scope was refreshed, Phases 10 and 11 pushed, and the pipeline ran for

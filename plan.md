@@ -497,6 +497,54 @@ deliberately triggered compensation, without reading anything else.
 
 ---
 
+## Phase 11.5 — Reconciliation ✅ *(done 2026-08-26)*
+
+The gap flagged since Phase 4 and proven real in Phase 8. Closed on **both** sides, because
+investigating it turned up a second, different leak.
+
+- [x] `OrderReconciliationService` — sweeps orders stuck at `INVENTORY_RESERVED` past a
+      threshold and re-drives settlement
+- [x] `SettlementRecoveryService` — drains `order.confirmed.DLT` / `order.cancelled.DLT` and
+      re-applies them
+- [x] `@Version` on `Order`, deferred since Phase 2, now that a second writer genuinely exists
+- [x] 16 tests (11 order, 5 inventory), mutation-verified
+
+**Two different failures, one shape.** Both strand stock while every component behaves exactly
+as designed:
+
+1. *The marker outlives the work.* `processed_event` commits, settlement then fails,
+   redelivery correctly skips. No consumer-side retry can help — skipping is right.
+2. *The dead-letter topic is write-only.* Anything that exhausts its retries lands in a `.DLT`
+   that **nothing ever reads**. Excellent at stopping a poison message blocking a partition;
+   a guaranteed leak of whatever lands there.
+
+**The second one was found by looking at the live database, not by reasoning.** 1608 orders
+all read `CONFIRMED`, yet 9 units were still reserved. Tracing it: `order.confirmed.DLT` held
+exactly 9 records, and their headers gave the cause —
+`ReservationConflictException: ... after 4 attempts due to concurrent modification`. Benchmark
+run 1's 200 orders against a single product exhausted the optimistic-lock retry budget for 9
+confirmations. **My order-side sweeper does not catch this**: order-service settled perfectly;
+the drift is entirely inventory-side.
+
+**Verified against the real data**, not only in tests. One sweep recovered all nine —
+`examined=9 confirmed=9 released=0 failed=0` — leaving `orders CONFIRMED` = 1608 and
+`reservations CONFIRMED` = 1608, with zero stock held. Consumer-group lag 0, so the records are
+not reprocessed.
+
+**A deliberate policy difference.** The listener cancels when payment is unreachable, because a
+customer is waiting. The sweeper does **not** — a five-minute outage would otherwise cancel an
+entire backlog. It waits, with a much longer ceiling after which it frees the stock anyway.
+A mutation test pins this: making the sweeper cancel on outage fails exactly one test.
+
+**Still open, and honestly the better fix:** confirm and release use read-modify-write with an
+optimistic lock, when they are pure relative adjustments (`reserved -= n`) that one atomic
+`UPDATE` would apply with no contention failure mode at all. Reconciliation makes the symptom
+recoverable; it does not make it stop happening.
+
+**Exit:** met. See [ADR-0008](docs/decisions/0008-reconcile-state-not-messages.md).
+
+---
+
 # Part B — GCP
 
 Cost target: **as cheap as possible.** Estimates below; every phase notes its cost impact.

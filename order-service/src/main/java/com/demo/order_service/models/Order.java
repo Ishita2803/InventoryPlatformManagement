@@ -60,6 +60,21 @@ public class Order {
     )
     private List<OrderItem> items = new ArrayList<>();
 
+    /**
+     * Optimistic lock. Deferred in Phase 2 with an explicit reason: concurrent status updates
+     * were not yet possible, and protection that cannot be exercised is indistinguishable
+     * from decoration.
+     *
+     * <p>Phase 11.5 makes them possible for the first time. The reconciliation job is a second
+     * writer to this row, running on a timer alongside the Kafka listener, so two paths can
+     * now try to settle the same order at once. Without this column both would read
+     * INVENTORY_RESERVED, both would pass the terminal check, and both would queue a
+     * settlement event. With it, the loser's UPDATE matches no rows and it backs off.
+     */
+    @Version
+    @Column(nullable = false)
+    private Long version;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 

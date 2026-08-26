@@ -197,9 +197,49 @@ event for one order carries the same key and would land on the same partition. O
   inventory or payment — p50 189 ms under load once storage is not the constraint.
 - The platform sustains ~110 accepted orders/sec and ~29 fully-settled orders/sec on a single
   developer machine running all ten containers.
-- 1000 concurrent orders settled with zero oversell and zero lost orders.
+- 1000 concurrent orders settled with zero oversell and zero lost orders (run 4, spread
+  across 50 products — see the correction below regarding run 1).
 - Throughput in the default configuration is bound by storage `fsync` latency, demonstrated
   by a 14.7× improvement from changing one durability setting and nothing else.
+
+### Correction, found after the fact
+
+The run 1 figures above are accurate as printed, but the conclusion they invited was not.
+
+Inspecting the databases some hours later showed **1608 orders all reading `CONFIRMED` while
+9 units were still reserved** — two facts that cannot both be true, since a confirmed order has
+shipped its stock. `order.confirmed.DLT` held exactly 9 records, and their headers gave the
+cause:
+
+```
+ReservationConflictException: Could not complete confirm orderId=3fae5e6f-...
+  after 4 attempts due to concurrent modification
+Caused by: ObjectOptimisticLockingFailureException: expected row count 1 but was 0
+```
+
+Run 1's 200 orders against a **single** product drove the `inventory` row's version to 391.
+Nine confirmations exhausted the four-attempt optimistic-lock retry budget, the listener's
+error handler retried three more times and gave up, and the records were dead-lettered.
+Nothing read that topic, so **9 units were stranded permanently** — about **4.5% of run 1's
+orders left inventory in a state inconsistent with order-service.**
+
+This refines, rather than overturns, the earlier finding. Row contention genuinely was *not*
+the throughput bottleneck — that was `fsync`, and runs 2 and 3 confirm it. But contention was
+a **correctness problem at the tail**, which measuring throughput alone could never have
+revealed. The two are independent, and looking only at orders-per-second hid the second one
+completely.
+
+Runs 2–4 spread load across 20 and 50 products and produced no dead letters at all; the DLTs
+contained exactly 9 records in total, all from run 1.
+
+**What this changes about the claims above:** "zero oversell" stands — nothing was ever sold
+twice. "Stock reconciled exactly" was verified for run 4 and is true there, but it was checked
+via order status plus one product's stock, which would not have caught this class of drift.
+The right check is cross-service: `orders CONFIRMED` must equal `reservations CONFIRMED`.
+
+Phase 11.5 added the reconciliation that recovers it. Run against this live data, one sweep
+reported `examined=9 confirmed=9 released=0 failed=0`, after which the two counts agreed at
+1608 and `SUM(reserved_quantity)` was 0.
 
 **Not supported, and not claimed:**
 

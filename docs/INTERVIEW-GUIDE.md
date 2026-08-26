@@ -11,10 +11,10 @@
 >    both drain the same outbox row; it's harmless because consumers are idempotent, and
 >    `SKIP LOCKED` is the clean fix" reads as senior. Being caught not knowing reads as
 >    junior.
-> 3. Everything below is **true as of Phases 0–11**. Status is tracked in
+> 3. Everything below is **true as of Phases 0–11.5**. Status is tracked in
 >    [`plan.md`](../plan.md); implementation detail in [`Agent.md`](../Agent.md).
 
-**Last updated:** 2026-08-26, after Phase 11.
+**Last updated:** 2026-08-26, after Phase 11.5.
 
 ---
 
@@ -435,7 +435,7 @@ processed_event  (same shape as above)
 
 | Fact | Value |
 |---|---|
-| Tests | **101** across the five application modules — 51 order, 33 inventory, 6 notification, 6 gateway, 5 payment (103 in CI, +2 infrastructure smoke tests) |
+| Tests | **117** across the five application modules — 62 order, 38 inventory, 6 notification, 6 gateway, 5 payment (119 in CI, +2 infrastructure smoke tests) |
 | Test split | 58 unit/slice, **43 integration** (embedded Kafka, real MySQL via Testcontainers, stub HTTP servers) |
 | Optimistic-lock retry | 4 attempts, exponential backoff with jitter |
 | Kafka consumer retry | 3 attempts, then DLT |
@@ -543,6 +543,54 @@ not two.
 > transactions and two network hops. The producer runs four times faster than the consumer —
 > and that is fine, precisely because the outbox makes the backlog durable. It queues, it
 > does not lose orders.
+
+**"Tell me about a bug you found that nobody reported."**
+> The system told me everything was fine and it wasn't.
+>
+> After benchmarking I looked at the live databases. Order-service said all 1608 orders were
+> CONFIRMED. Inventory still had 9 units reserved. Those two facts cannot both be right — a
+> confirmed order has shipped its stock, it does not still hold it.
+>
+> The outbox showed all 1608 `order.confirmed` events published, so nothing was lost on the way
+> out. Then I checked the dead-letter topic: `order.confirmed.DLT` had exactly 9 records. The
+> headers carried the cause — `ReservationConflictException: after 4 attempts due to concurrent
+> modification`. Benchmark run 1 fired 200 orders at a single product, so every confirmation
+> fought for the same inventory row, and 9 of them exhausted the optimistic-lock retry budget.
+> The error handler retried three more times, gave up, and dead-lettered them.
+>
+> Everything behaved exactly as designed. The bug was architectural: **we had dead-letter
+> topics that nothing ever read.** They were write-only. Brilliant at stopping one poison
+> message from blocking a partition, and a guaranteed leak of anything that landed there.
+>
+> What I find useful about it is that it was invisible from inside the message flow. No error,
+> no alert, no failed request. You only see it by comparing state across the two services and
+> asking whether those numbers can both be true.
+
+**"So how did you fix it?"**
+> Two scheduled jobs, because there were two different leaks.
+>
+> One sweeps order-service for orders stuck at INVENTORY_RESERVED and re-drives settlement.
+> That covers the older gap where the `processed_event` row commits and settlement then fails —
+> redelivery correctly skips it, so no consumer-side retry can ever help.
+>
+> The other drains the dead-letter topics and re-applies them. Both are safe to run repeatedly:
+> payment is idempotent by orderId, and confirm and release both filter on `status = RESERVED`,
+> so a replayed settlement matches no rows.
+>
+> One design decision I'd defend: the sweeper does **not** cancel an order when payment is
+> unreachable, even though the live listener does. For a live order that's right — a customer
+> is waiting. In a sweep it would let a five-minute provider outage cancel an entire backlog,
+> turning a temporary failure into permanently lost business. So it waits, with a much longer
+> ceiling after which it frees the stock anyway. There's a mutation test on that: make the
+> sweeper cancel on outage and exactly one test fails.
+>
+> And I ran it against the real data rather than only the tests. One sweep: nine recovered,
+> 1608 orders confirmed against 1608 reservations confirmed, zero stock held.
+>
+> The honest part is that it's a safety net, not a fix. The root cause is that confirm and
+> release use read-modify-write with an optimistic lock when they're pure relative adjustments —
+> `reserved -= n` — which a single atomic UPDATE would apply with no contention failure mode at
+> all. That's the better fix and I haven't done it.
 
 **"Where does this break at 10× scale?"**
 > Three places. The `processed_event` tables grow unbounded — they need a retention job. The

@@ -53,3 +53,13 @@ eureka:
     enabled: false
     register-with-eureka: false
     fetch-registry: false
+
+# Dead-letter recovery is effectively OFF in tests (one hour), the same convention the outbox
+# poller uses in order-service. Tests call recover() directly. A sweep running underneath a
+# slice test would consume records the test had deliberately parked in a DLT, and the failure
+# would look like flakiness rather than like a timer.
+settlement-recovery:
+  interval-ms: 3600000
+  initial-delay-ms: 3600000
+  poll-timeout-ms: 2000
+  max-records: 100

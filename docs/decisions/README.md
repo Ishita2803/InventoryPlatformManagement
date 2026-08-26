@@ -16,6 +16,7 @@ caused a problem, the problem is recorded in the same file rather than quietly e
 | [0005](0005-per-service-event-classes.md) | Duplicated event classes | Why is there no shared `common-events` module? |
 | [0006](0006-mock-payment-service.md) | A real HTTP service that mocks payments | Why a whole service instead of a stubbed interface? |
 | [0007](0007-gateway-mvc-over-webflux.md) | Spring Cloud Gateway MVC | Why the servlet gateway when every tutorial uses WebFlux? |
+| [0008](0008-reconcile-state-not-messages.md) | Reconcile state, not messages | Idempotency stops double work — what stops work that never finished? |
 
 ## Format
 

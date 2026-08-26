@@ -83,3 +83,15 @@ resilience4j:
         failure-rate-threshold: 50
         wait-duration-in-open-state: 2s
         permitted-number-of-calls-in-half-open-state: 1
+
+# The reconciliation sweep is effectively OFF in tests (one hour), exactly like the outbox
+# poller above. Tests call reconcile() directly. A sweeper running underneath every slice test
+# would settle orders the test had deliberately parked, and the failures would look like
+# flakiness rather than like a timer.
+reconciliation:
+  interval-ms: 3600000
+  initial-delay-ms: 3600000
+  stuck-after-ms: 300000
+  give-up-after-ms: 3600000
+  pending-stuck-after-ms: 600000
+  batch-size: 50
