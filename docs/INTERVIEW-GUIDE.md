@@ -435,7 +435,7 @@ processed_event  (same shape as above)
 
 | Fact | Value |
 |---|---|
-| Tests | **101** — 51 order, 33 inventory, 6 notification, 6 gateway, 5 payment |
+| Tests | **101** across the five application modules — 51 order, 33 inventory, 6 notification, 6 gateway, 5 payment (103 in CI, +2 infrastructure smoke tests) |
 | Test split | 58 unit/slice, **43 integration** (embedded Kafka, real MySQL via Testcontainers, stub HTTP servers) |
 | Optimistic-lock retry | 4 attempts, exponential backoff with jitter |
 | Kafka consumer retry | 3 attempts, then DLT |

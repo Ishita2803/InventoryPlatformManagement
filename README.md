@@ -284,9 +284,12 @@ PENDING ──► INVENTORY_RESERVED ──► CONFIRMED
 
 ## Testing
 
-**101 tests** across five modules — 51 order, 33 inventory, 6 notification, 6 gateway,
-5 payment. **43 of them are integration tests** against an embedded Kafka broker, a real
-MySQL 8 container, or a real HTTP server.
+**101 tests** across the five application modules — 51 order, 33 inventory, 6 notification,
+6 gateway, 5 payment. **43 of them are integration tests** against an embedded Kafka broker, a
+real MySQL 8 container, or a real HTTP server.
+
+CI reports **103**, because `config-service` and `discovery-service` each contribute a
+context-load smoke test on top.
 
 ```bash
 cd order-service && ./mvnw verify     # note: verify, not test

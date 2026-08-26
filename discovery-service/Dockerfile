@@ -20,13 +20,13 @@ RUN chmod +x mvnw
 # A BuildKit cache mount for the local Maven repository. Unlike a COPYed layer this is shared
 # across builds AND across services, so the seven images in this project resolve Spring Boot
 # once rather than seven times. It is not baked into the image.
-RUN --mount=type=cache,target=/root/.m2 ./mvnw -B -q dependency:go-offline
+RUN --mount=type=cache,target=/root/.m2/repository,sharing=locked ./mvnw -B -q dependency:go-offline
 
 COPY src/ src/
 # Tests are deliberately NOT run here. They run in CI against real infrastructure; running
 # them during an image build would need a database and a broker inside the builder, and
 # would make every image rebuild pay for the whole suite.
-RUN --mount=type=cache,target=/root/.m2 ./mvnw -B -q clean package -DskipTests
+RUN --mount=type=cache,target=/root/.m2/repository,sharing=locked ./mvnw -B -q clean package -DskipTests
 
 # Split the fat jar into its layers, so the runtime image can order them by change frequency.
 RUN java -Djarmode=tools -jar target/*.jar extract --layers --launcher --destination extracted

@@ -433,9 +433,14 @@ healthcheck hit in Phase 7. With tmpfs the suite runs in ~26s.
 in this project and the build would go green while proving far less than it looks. Images are
 built but **not pushed** — there is no registry until Phase 17.
 
-**Exit:** met. All five modules green — **101 tests** (51 order, 33 inventory, 6 notification,
-6 gateway, 5 payment), of which 43 are integration tests against a real broker, real MySQL,
-or a real HTTP server.
+**Exit:** met. All five application modules green — **101 tests** (51 order, 33 inventory,
+6 notification, 6 gateway, 5 payment), of which 43 are integration tests against a real
+broker, real MySQL, or a real HTTP server. CI reports **103 across all seven modules**, the
+extra two being context-load smoke tests in `config-service` and `discovery-service`.
+
+**Verified on real runners 2026-08-26** (run `32991750979`): all seven matrix jobs green,
+103 tests, 0 failures, 0 errors, 0 skipped — including the Testcontainers MySQL tests, which
+needed no tmpfs tuning on GitHub's runners.
 
 ## Phase 11 — Documentation ✅ *(done 2026-08-26)*
 
