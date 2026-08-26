@@ -62,3 +62,24 @@ outbox:
   batch-size: 100
   max-attempts: 3
   send-timeout-seconds: 5
+
+# Payment points at a dead port by default in tests; the ITs that need it override this.
+payment:
+  base-url: http://localhost:1
+  connect-timeout-ms: 200
+  read-timeout-ms: 300
+
+resilience4j:
+  retry:
+    instances:
+      payment:
+        max-attempts: 2
+        wait-duration: 50ms
+  circuitbreaker:
+    instances:
+      payment:
+        sliding-window-size: 4
+        minimum-number-of-calls: 2
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 2s
+        permitted-number-of-calls-in-half-open-state: 1

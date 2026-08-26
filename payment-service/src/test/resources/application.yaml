@@ -1,0 +1,23 @@
+# Test configuration. Shadows the main file, whose non-optional
+# `spring.config.import: configserver:...` would otherwise need Config Server running.
+
+server:
+  port: 0
+
+spring:
+  application:
+    name: payment-service
+  cloud:
+    config:
+      enabled: false
+    discovery:
+      enabled: false
+
+payment:
+  delay-ms: 0
+
+eureka:
+  client:
+    enabled: false
+    register-with-eureka: false
+    fetch-registry: false

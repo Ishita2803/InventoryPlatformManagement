@@ -2,6 +2,8 @@ package com.demo.order_service.outbox;
 
 import com.demo.order_service.dto.OrderResponse;
 import com.demo.order_service.events.KafkaTopics;
+import com.demo.order_service.events.OrderCancelledEvent;
+import com.demo.order_service.events.OrderConfirmedEvent;
 import com.demo.order_service.events.OrderPlacedEvent;
 import com.demo.order_service.models.OutboxEvent;
 import com.demo.order_service.repository.OutboxEventRepository;
@@ -52,13 +54,59 @@ public class OutboxWriter {
                 "Order",
                 order.orderId(),          // Kafka key: one order, one partition, ordered
                 KafkaTopics.ORDER_PLACED,
-                serialize(event)));
+                serializeOrderPlaced(event)));
 
         log.debug("Queued OrderPlaced eventId={} for order {} in the outbox",
                 event.eventId(), order.orderId());
     }
 
-    private String serialize(OrderPlacedEvent event) {
+    /** Payment succeeded: tell inventory the reservation has become a shipment. */
+    public void writeOrderConfirmed(String orderId, String paymentId) {
+
+        OrderConfirmedEvent event = new OrderConfirmedEvent(
+                UUID.randomUUID().toString(), orderId, paymentId, Instant.now());
+
+        write(event.eventId(), orderId, KafkaTopics.ORDER_CONFIRMED, event);
+    }
+
+    /**
+     * The compensation trigger. Written to the outbox in the same transaction as the
+     * cancellation, so stock is released even if this service dies immediately afterwards —
+     * which is the whole reason compensation goes through the outbox rather than a direct
+     * call to inventory.
+     */
+    public void writeOrderCancelled(String orderId, String reason) {
+
+        // Bounded at the source. The reason often carries an exception message, whose length
+        // is not something this service controls.
+        String boundedReason = reason == null
+                ? "unspecified"
+                : reason.substring(0, Math.min(reason.length(), 500));
+
+        OrderCancelledEvent event = new OrderCancelledEvent(
+                UUID.randomUUID().toString(), orderId, boundedReason, Instant.now());
+
+        write(event.eventId(), orderId, KafkaTopics.ORDER_CANCELLED, event);
+    }
+
+    private void write(String eventId, String orderId, String topic, Object payload) {
+
+        outboxEventRepository.save(new OutboxEvent(
+                eventId, "Order", orderId, topic, serialize(payload)));
+
+        log.debug("Queued {} eventId={} for order {} in the outbox", topic, eventId, orderId);
+    }
+
+    private String serialize(Object event) {
+        try {
+            return objectMapper.writeValueAsString(event);
+        } catch (JsonProcessingException failure) {
+            throw new IllegalStateException(
+                    "Could not serialize outbox payload " + event.getClass().getSimpleName(), failure);
+        }
+    }
+
+    private String serializeOrderPlaced(OrderPlacedEvent event) {
         try {
             return objectMapper.writeValueAsString(event);
         } catch (JsonProcessingException failure) {

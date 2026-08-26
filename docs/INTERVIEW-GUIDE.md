@@ -11,10 +11,10 @@
 >    both drain the same outbox row; it's harmless because consumers are idempotent, and
 >    `SKIP LOCKED` is the clean fix" reads as senior. Being caught not knowing reads as
 >    junior.
-> 3. Everything below is **true as of Phases 0–7**. Status is tracked in
+> 3. Everything below is **true as of Phases 0–8**. Status is tracked in
 >    [`plan.md`](../plan.md); implementation detail in [`Agent.md`](../Agent.md).
 
-**Last updated:** 2026-08-26, after Phase 7.
+**Last updated:** 2026-08-26, after Phase 8.
 
 ---
 
@@ -109,7 +109,7 @@ question.
 | MySQL | 3306 | **Running** | `order_db`, `inventory_db` | A database per service. Currently one instance, two schemas — see honesty section. |
 | `api-gateway-service` | 8080 | **Built** | Single entry point; routes, correlation ids, error translation | One public surface instead of five. Routes live in **config**, switchable to Kubernetes DNS by profile. |
 | `notification-service` | 8083 | **Built** | Consumes both result topics, sends a mock email | Proves the events are genuinely reusable: adding a whole new consumer required changing neither producer. Has **no database at all**. |
-| `payment-service` | — | **Not created** | Mocked, synchronous | Planned Phase 8. Exists to give Resilience4j a real target. |
+| `payment-service` | 8084 | **Built** | Mocked provider, idempotent by orderId | The only **synchronous** call in the platform — which is the only reason a circuit breaker is not decoration here. |
 
 ### Why each *technology* is there
 
@@ -319,24 +319,62 @@ parse won't parse the second time, so retrying just delays everything behind it.
 > DLT that works while the partition stalls anyway would pass the obvious test and still be
 > broken.
 
-### 4.5 Saga / distributed transactions
+### 4.5 Saga, compensation, and the circuit breaker
 
-**Problem.** You can't have an ACID transaction across order-service and inventory-service.
+**Problem.** You cannot have an ACID transaction across order, inventory and payment.
 
-**What I did.** A **choreography-based saga**: no central orchestrator, each service reacts to
-events and emits its own. Order → `OrderPlaced` → Inventory → `InventoryReserved`/`Failed` →
-Order updates.
+**What I did.** A **choreography-based saga** — no orchestrator, each service reacts to
+events. The full path:
 
-**Compensation:** `releaseInventory(orderId)` is order-scoped and exists — it releases every
-line an order holds. It's currently only needed for a *downstream* failure (payment, Phase 8);
-the in-flight partial-order case can't happen because reservation is all-or-nothing.
+```
+OrderPlaced → reserve stock → InventoryReserved
+                                    ↓
+                          order-service calls PAYMENT (synchronous)
+                                    ↓
+        approved ────────────────┐  └──── declined / timeout / circuit open
+             ↓                   │                    ↓
+      order CONFIRMED            │             order CANCELLED
+      → OrderConfirmed           │             → OrderCancelled
+      → inventory CONFIRMS       │             → inventory RELEASES   ← compensation
+        (stock ships; does NOT   │
+         return to available)    │
+```
+
+**Why payment is synchronous when everything else is not.** This is the question to be ready
+for. You cannot ship an order and find out later whether it was paid for — payment is the one
+step that genuinely wants an answer now. And it is *because* there is a synchronous call that
+a circuit breaker is worth having: in a pure-Kafka design the broker already absorbs a slow
+consumer, so a breaker would be protecting nothing.
+
+**Around that call:** an HTTP read timeout (2s), 3 attempts with exponential backoff, a
+circuit breaker opening at 50% failures over at least 5 calls, and a fallback.
+
+- **A read timeout, not Resilience4j's `TimeLimiter`** — TimeLimiter needs a
+  `CompletableFuture` to cancel, and a blocking call has nothing to cancel.
+- **A decline is not a failure.** It returns 200 with `DECLINED`, so it is not retried and
+  does not count towards the breaker. Retrying the bank's "no" is pointless and would
+  eventually trip the breaker on a service that is working perfectly.
+- **The fallback fails closed** — cancel, do not confirm. Approving on failure ships goods
+  for free; leaving it pending holds stock forever. Cancelling is the option that is safe to
+  be wrong about.
+- **Payment is idempotent by orderId**, which is what makes the retry safe. A retry in front
+  of a non-idempotent charge is a double-charge waiting to happen.
+
+**Compensation goes through the outbox, not a REST call.** order-service could have called
+`POST /api/inventory/release` directly, but a cancellation during an inventory restart would
+then be lost and the stock leaked forever. Published as `OrderCancelled`, it waits in the
+topic.
 
 **Choreography vs orchestration, if asked:**
-> *"Choreography, because there are only two participants and no complex branching — an
-> orchestrator would be a component to build, deploy and keep available for no benefit. With
-> five or six steps and conditional paths I'd switch to orchestration, because with
-> choreography the business process ends up as an emergent property of scattered listeners
-> and nobody can see it in one place."*
+> *"Choreography, because there are three participants and no complex branching. With five or
+> six steps and conditional paths I'd switch to orchestration, because with choreography the
+> business process becomes an emergent property of scattered listeners and nobody can see it
+> in one place."*
+
+> **The demo that lands.** Kill the payment service. Place orders. The first is cancelled
+> after the timeout; the breaker opens on the second, so the third fails *instantly* without
+> a network call at all; stock is released every time. Restart payment and watch
+> `OPEN → HALF_OPEN → CLOSED` in `/actuator/circuitbreakers` as trial calls succeed.
 
 ---
 
@@ -397,10 +435,11 @@ processed_event  (same shape as above)
 
 | Fact | Value |
 |---|---|
-| Tests | **83** — 42 order, 29 inventory, 6 notification, 6 gateway |
-| Test split | 58 unit/slice, 25 integration (embedded Kafka, real DBs, a stub HTTP server) |
+| Tests | **94** — 48 order, 29 inventory, 6 notification, 6 gateway, 5 payment |
+| Test split | 63 unit/slice, 31 integration (embedded Kafka, real DBs, stub HTTP servers) |
 | Optimistic-lock retry | 4 attempts, exponential backoff with jitter |
 | Kafka consumer retry | 3 attempts, then DLT |
+| Payment call | read timeout 2s, 3 attempts, breaker opens at 50% over ≥5 calls |
 | Outbox publish retry | 10 attempts (3 in tests), then quarantined as `FAILED` |
 | Verified E2E (happy) | qty 3 vs stock 10 → `INVENTORY_RESERVED`, stock 7/3, `version=1` |
 | Verified E2E (failure) | qty 999 → `INVENTORY_FAILED`, **no** reservation row, stock untouched |
@@ -492,11 +531,18 @@ not two.
 
 | Not built | Phase |
 |---|---|
-| Payment service, Resilience4j circuit breaker | 8 |
 | Dockerfiles per service (the Compose file for Kafka + MySQL **is** verified working) | 9 |
 | Testcontainers, CI pipeline | 10 |
 | README, ADRs, OpenAPI, **any throughput benchmark** | 11 |
 | Everything GCP: GKE, Secret Manager, deployment | 12–18 |
+
+**One thing that is genuinely broken right now, and say so if the saga comes up:** three
+orders are permanently stuck at `INVENTORY_RESERVED` holding stock. The `processed_event` row
+commits in one transaction and the settlement in another; when the second failed, redelivery
+correctly skipped the event as already handled and nothing resumed it. Payment is idempotent
+so resuming is safe — the missing piece is a reconciliation job over orders stale in
+`INVENTORY_RESERVED`. *"I know exactly why it happens and what fixes it"* is a much better
+answer than not having noticed.
 
 **Also be honest about these:**
 
@@ -540,7 +586,12 @@ Frame as problems solved, not technologies used.
 > verified by pointing the service at a dead broker and asserting the order still commits
 > with its event queued for retry.
 
-**Do not yet write:** Saga (partial), Docker, Kubernetes, GCP, CI/CD, circuit breaker.
+> **Made a distributed Saga compensate correctly under failure** — a declined, timed-out or
+> circuit-broken payment cancels the order and releases the reserved stock via an event, so
+> inventory is never leaked; demonstrated by killing the payment service and observing the
+> breaker open, the fallback fire, and stock return.
+
+**Do not yet write:** Docker, Kubernetes, GCP, CI/CD.
 
 ---
 

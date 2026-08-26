@@ -64,8 +64,17 @@ public class OutboxEvent {
      * then a snapshot of what was true when the order was placed, and cannot drift if the
      * order is later modified.
      */
+    // length is NOT decoration here. @Lob on a String with no length maps to MySQL's
+    // smallest text tier -- TINYTEXT, 255 bytes -- and inserts then fail with
+    // "Data truncation: Data too long for column 'payload'". Hibernate picks the tier from
+    // this attribute, so an explicit large value is what produces LONGTEXT.
+    //
+    // This was latent from Phase 5: OrderPlaced payloads came to roughly 200 characters and
+    // fit by luck. A three-line order, or a cancellation carrying an exception message,
+    // overflows it. H2 does not reproduce the mapping, so the unit tests could never have
+    // caught it -- an argument for the Testcontainers work in Phase 10.
     @Lob
-    @Column(nullable = false, updatable = false)
+    @Column(nullable = false, updatable = false, length = 1_000_000)
     private String payload;
 
     @Enumerated(EnumType.STRING)

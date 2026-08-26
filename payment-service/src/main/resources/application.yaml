@@ -1,0 +1,8 @@
+spring:
+  application:
+    name: payment-service
+
+  # Everything else comes from config-repo/payment-service.yaml via Config Server.
+  # Non-optional on purpose: a missing Config Server should be a loud startup failure.
+  config:
+    import: configserver:http://localhost:8888

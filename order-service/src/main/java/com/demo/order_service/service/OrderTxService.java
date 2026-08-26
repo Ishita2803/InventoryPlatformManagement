@@ -113,6 +113,39 @@ public class OrderTxService {
         return true;
     }
 
+    /**
+     * Applies payment's answer and queues the matching settlement event, in one transaction.
+     *
+     * <p>The status change and the event that tells inventory about it commit together, so
+     * an order can never be CANCELLED without the release being queued, nor CONFIRMED
+     * without inventory being told to confirm. That is the outbox doing the same job for
+     * compensation that it already does for OrderPlaced.
+     */
+    @Transactional
+    public OrderResponse settleOrder(String orderId, boolean approved,
+                                     String paymentId, String reason) {
+
+        Order order = loadOrder(orderId);
+
+        if (order.getStatus().isTerminal()) {
+            // A late duplicate. Nothing to do, and nothing to publish.
+            log.info("Order {} is already {} — not settling again", orderId, order.getStatus());
+            return orderMapper.toResponse(order);
+        }
+
+        if (approved) {
+            order.transitionTo(OrderStatus.CONFIRMED);
+            outboxWriter.writeOrderConfirmed(orderId, paymentId);
+            log.info("Order {} CONFIRMED (payment {})", orderId, paymentId);
+        } else {
+            order.transitionTo(OrderStatus.CANCELLED);
+            outboxWriter.writeOrderCancelled(orderId, reason);
+            log.info("Order {} CANCELLED: {}", orderId, reason);
+        }
+
+        return orderMapper.toResponse(order);
+    }
+
     private Order loadOrder(String orderId) {
         return orderRepository.findByOrderId(orderId)
                 .orElseThrow(() -> new OrderNotFoundException(

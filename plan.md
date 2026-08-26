@@ -316,18 +316,54 @@ against a stub that inspects the received header), but the downstream services d
 **log** it — they have no correlation filter of their own — so the trail currently stops at
 the gateway. Phase 9's structured logging with `traceId` completes it.
 
-## Phase 8 — Payment Service + Resilience4j
+## Phase 8 — Payment Service + Resilience4j ✅ *(done 2026-08-26)*
 
 > **Design note:** in a pure-Kafka design there is no synchronous inter-service call, so a
 > circuit breaker would be decoration. The mocked Payment Service exists to give
 > Resilience4j a genuine target — and to make the Saga a real Saga.
 
-- [ ] `payment-service` (mocked), called **synchronously** from Order after reserve
-- [ ] Resilience4j: timeout, retry, circuit breaker, fallback
-- [ ] Payment failure → inventory release + order `CANCELLED`
+- [x] `payment-service` (mocked), called **synchronously** from order-service after reserve.
+      **Idempotent by orderId**, which is what makes putting a retry in front of it safe.
+      Switchable at runtime (APPROVE / DECLINE / SLOW) so the failure paths can be shown live.
+- [x] Resilience4j: HTTP read timeout, retry with exponential backoff, circuit breaker,
+      fallback. 5 integration tests against a stub that can be told to misbehave.
+- [x] Payment failure → order `CANCELLED` → `OrderCancelled` event → inventory releases.
+      Payment success → `CONFIRMED` → `OrderConfirmed` → inventory confirms (stock ships and
+      does **not** return to available).
+- [x] Compensation travels **through the outbox**, not a direct REST call, so a cancellation
+      during an inventory-service restart is not lost.
 
-**Exit:** with Payment stopped, the circuit opens, the fallback fires, and inventory is
-released rather than leaked.
+**A read timeout, not a TimeLimiter.** Resilience4j's TimeLimiter needs a
+`CompletableFuture` to cancel; there is nothing to cancel in a blocking call. Using it here
+would be cargo cult.
+
+**Two real bugs this phase found — both invisible to a passing unit test:**
+
+1. **The fallback silently disabled the retry.** It was declared on `@CircuitBreaker`, which
+   Resilience4j nests *inside* `@Retry`. The first failure hit the fallback, which returned
+   normally, so Retry saw a success and never retried. The configuration looked perfect.
+   Only a test counting requests *at the server* caught it. The fallback now sits on the
+   outermost annotation.
+2. **The outbox `payload` column was TINYTEXT (255 bytes).** `@Lob` on a String with no
+   length makes Hibernate pick MySQL's smallest text tier. Latent since Phase 5 —
+   `OrderPlaced` payloads were ~200 characters and fit by luck — and it surfaced the moment
+   a cancellation carried an exception message. H2 does not reproduce the mapping, so no
+   existing test could have caught it. Now `mediumtext`.
+
+**Exit:** met. With payment stopped: three orders each returned `CANCELLED`, the breaker went
+`CLOSED → OPEN` after the second, and stock was released rather than leaked (reserved
+unchanged, because each order reserved and released the same quantity). Restarting payment
+showed the full recovery: `OPEN → HALF_OPEN → CLOSED` after two successful trial calls, with
+those orders reaching `CONFIRMED`. Also verified: an approved payment ships the stock
+(reserved drops, available does **not** rise), and a declined payment returns it.
+
+**The documented Phase 4 gap manifested for real, which is worth knowing.** Three orders from
+before the TINYTEXT fix are permanently stuck at `INVENTORY_RESERVED` holding 6 units: the
+`processed_event` row committed in the first transaction, the settlement transaction then
+failed, and redelivery correctly skipped the event as already handled. Payment is idempotent
+so resuming would be safe — what is missing is the thing that resumes it. **A reconciliation
+job over orders sitting in `INVENTORY_RESERVED` past a threshold is now a required item, not
+a nice-to-have.**
 
 ## Phase 9 — Containerise everything
 

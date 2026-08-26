@@ -15,6 +15,15 @@ public final class KafkaTopics {
     public static final String INVENTORY_RESERVED = "inventory.reserved";
     public static final String INVENTORY_FAILED = "inventory.failed";
 
+    /**
+     * The Saga's settlement step, published by order-service once payment has answered.
+     * Inventory listens and either confirms the reservation (stock has shipped) or releases
+     * it (compensation). Doing this by event rather than a REST call from order-service
+     * means compensation survives inventory-service being briefly down.
+     */
+    public static final String ORDER_CONFIRMED = "order.confirmed";
+    public static final String ORDER_CANCELLED = "order.cancelled";
+
     private KafkaTopics() {
     }
 }

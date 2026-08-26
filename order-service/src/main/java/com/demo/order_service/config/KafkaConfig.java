@@ -49,6 +49,17 @@ public class KafkaConfig {
                 .build();
     }
 
+    /** Settlement topics: this service publishes both, so it declares both. */
+    @Bean
+    public NewTopic orderConfirmedTopic() {
+        return TopicBuilder.name(KafkaTopics.ORDER_CONFIRMED).partitions(1).replicas(1).build();
+    }
+
+    @Bean
+    public NewTopic orderCancelledTopic() {
+        return TopicBuilder.name(KafkaTopics.ORDER_CANCELLED).partitions(1).replicas(1).build();
+    }
+
     /**
      * The object-valued template, for publishing domain events as JSON.
      *

@@ -8,10 +8,13 @@ import com.demo.order_service.events.InventoryReservedEvent;
 import com.demo.order_service.events.KafkaTopics;
 import com.demo.order_service.models.OrderStatus;
 import com.demo.order_service.outbox.OutboxPublisher;
+import com.demo.order_service.models.OutboxStatus;
 import com.demo.order_service.repository.OrderRepository;
+import com.demo.order_service.repository.OutboxEventRepository;
 import com.demo.order_service.service.OrderService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.sun.net.httpserver.HttpServer;
 import org.apache.kafka.clients.consumer.Consumer;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.junit.jupiter.api.AfterEach;
@@ -24,9 +27,17 @@ import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.test.EmbeddedKafkaBroker;
 import org.springframework.kafka.test.context.EmbeddedKafka;
 import org.springframework.kafka.test.utils.KafkaTestUtils;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
 
+import java.io.IOException;
+import java.io.OutputStream;
 import java.math.BigDecimal;
+import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicReference;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -64,6 +75,34 @@ class OrderEventFlowIT {
     private OutboxPublisher outboxPublisher;
 
     @Autowired
+    private OutboxEventRepository outboxEventRepository;
+
+    private static HttpServer paymentStub;
+    private static final AtomicReference<String> paymentMode = new AtomicReference<>("APPROVED");
+
+    /** A payment provider that can be told to approve or decline. */
+    @DynamicPropertySource
+    static void payment(DynamicPropertyRegistry registry) throws IOException {
+
+        paymentStub = HttpServer.create(new InetSocketAddress(0), 0);
+        paymentStub.createContext("/api/payments", exchange -> {
+            byte[] payload = ("""
+                    {\"paymentId\":\"pay-it\",\"orderId\":\"o\",\"status\":\"%s\",\"message\":\"stub\"}
+                    """.formatted(paymentMode.get())).getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, payload.length);
+            try (OutputStream out = exchange.getResponseBody()) {
+                out.write(payload);
+            }
+        });
+        paymentStub.setExecutor(Executors.newFixedThreadPool(4));
+        paymentStub.start();
+
+        registry.add("payment.base-url",
+                () -> "http://localhost:" + paymentStub.getAddress().getPort());
+    }
+
+    @Autowired
     private KafkaTemplate<String, Object> kafkaTemplate;
 
     @Autowired
@@ -75,6 +114,8 @@ class OrderEventFlowIT {
 
     @BeforeEach
     void setUp() {
+        paymentMode.set("APPROVED");
+        outboxEventRepository.deleteAll();
         orderRepository.deleteAll();
 
         Map<String, Object> consumerProps = KafkaTestUtils.consumerProps(
@@ -120,8 +161,8 @@ class OrderEventFlowIT {
     }
 
     @Test
-    @DisplayName("InventoryReserved moves the order out of PENDING")
-    void inventoryReservedAdvancesTheOrder() {
+    @DisplayName("InventoryReserved then an approved payment confirms the order")
+    void reservedThenApprovedConfirmsTheOrder() {
 
         OrderResponse order = orderService.createOrder(request());
         assertThat(order.status()).isEqualTo(OrderStatus.PENDING);
@@ -129,7 +170,34 @@ class OrderEventFlowIT {
         kafkaTemplate.send(KafkaTopics.INVENTORY_RESERVED, order.orderId(),
                 new InventoryReservedEvent(UUID.randomUUID().toString(), order.orderId(), Instant.now()));
 
-        awaitStatus(order.orderId(), OrderStatus.INVENTORY_RESERVED);
+        awaitStatus(order.orderId(), OrderStatus.CONFIRMED);
+
+        // And the settlement event is queued, so inventory will be told to confirm.
+        await().atMost(TIMEOUT).untilAsserted(() ->
+                assertThat(outboxEventRepository.findAll())
+                        .anyMatch(row -> row.getTopic().equals(KafkaTopics.ORDER_CONFIRMED)
+                                && row.getAggregateId().equals(order.orderId())));
+    }
+
+    @Test
+    @DisplayName("a declined payment cancels the order AND queues the compensating release")
+    void declinedPaymentCancelsAndCompensates() {
+
+        paymentMode.set("DECLINED");
+
+        OrderResponse order = orderService.createOrder(request());
+
+        kafkaTemplate.send(KafkaTopics.INVENTORY_RESERVED, order.orderId(),
+                new InventoryReservedEvent(UUID.randomUUID().toString(), order.orderId(), Instant.now()));
+
+        awaitStatus(order.orderId(), OrderStatus.CANCELLED);
+
+        // Compensation is durable: queued in the outbox, not a best-effort REST call that
+        // would be lost if inventory-service happened to be restarting.
+        await().atMost(TIMEOUT).untilAsserted(() ->
+                assertThat(outboxEventRepository.findAll())
+                        .anyMatch(row -> row.getTopic().equals(KafkaTopics.ORDER_CANCELLED)
+                                && row.getAggregateId().equals(order.orderId())));
     }
 
     @Test
@@ -146,7 +214,7 @@ class OrderEventFlowIT {
     }
 
     @Test
-    @DisplayName("a redelivered InventoryReserved is tolerated, not treated as a failure")
+    @DisplayName("a redelivered InventoryReserved settles the order once, not twice")
     void redeliveredResultIsTolerated() {
 
         OrderResponse order = orderService.createOrder(request());
@@ -157,13 +225,14 @@ class OrderEventFlowIT {
         kafkaTemplate.send(KafkaTopics.INVENTORY_RESERVED, order.orderId(), event);
         kafkaTemplate.send(KafkaTopics.INVENTORY_RESERVED, order.orderId(), event);
 
-        awaitStatus(order.orderId(), OrderStatus.INVENTORY_RESERVED);
+        awaitStatus(order.orderId(), OrderStatus.CONFIRMED);
 
-        // The second delivery hits the lifecycle guard, which the listener swallows. If it
-        // rethrew instead, the container would retry forever and stall the partition.
+        // The processed_event row means the second delivery does no work at all, so exactly
+        // one OrderConfirmed is queued -- and the customer is charged once.
         await().during(Duration.ofSeconds(2)).atMost(TIMEOUT).untilAsserted(() ->
-                assertThat(orderRepository.findByOrderId(order.orderId()).orElseThrow().getStatus())
-                        .isEqualTo(OrderStatus.INVENTORY_RESERVED));
+                assertThat(outboxEventRepository.findAll())
+                        .filteredOn(row -> row.getTopic().equals(KafkaTopics.ORDER_CONFIRMED))
+                        .hasSize(1));
     }
 
     private void awaitStatus(String orderId, OrderStatus expected) {

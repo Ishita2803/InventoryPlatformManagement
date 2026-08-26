@@ -68,6 +68,19 @@ public class KafkaErrorHandlingConfig {
         return handler;
     }
 
+    /** It now also consumes the two settlement topics, so it owns their DLTs too. */
+    @Bean
+    public NewTopic orderConfirmedDltTopic() {
+        return TopicBuilder.name(KafkaTopics.ORDER_CONFIRMED + DLT_SUFFIX)
+                .partitions(1).replicas(1).build();
+    }
+
+    @Bean
+    public NewTopic orderCancelledDltTopic() {
+        return TopicBuilder.name(KafkaTopics.ORDER_CANCELLED + DLT_SUFFIX)
+                .partitions(1).replicas(1).build();
+    }
+
     /** This service consumes order.placed, so this is the DLT it can produce to. */
     @Bean
     public NewTopic orderPlacedDltTopic() {

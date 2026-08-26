@@ -72,7 +72,7 @@ not feature count or delivery speed. Concretely:
 | Discovery | Eureka — **local only**, dropped on GKE (see §7) |
 | Config | Spring Cloud Config, git backend |
 | Gateway | Spring Cloud Gateway **MVC** (`spring-cloud-starter-gateway-server-webmvc`) |
-| Resilience | Resilience4j *(dependency present, unused — Phase 8)* |
+| Resilience | Resilience4j — timeout, retry, circuit breaker, fallback on the payment call |
 | Build | Maven (wrapper per module; there is **no parent aggregator pom**) |
 | Boilerplate | Lombok |
 | Container | Docker Desktop 29.7.2. `docker-compose.yml` **verified working**; per-service Dockerfiles still to come (Phase 9) |
@@ -97,9 +97,9 @@ aggregator pom, so "build everything" means looping over modules.
 | `order-service` | 8081 | Order lifecycle, `order_db` | yes | yes |
 | `inventory-service` | 8082 | Stock + reservations, `inventory_db` | yes | yes |
 | `notification-service` | 8083 | Consumes both result topics, mock email. **No database** | yes | yes |
-| `payment-service` | tbd | Mocked, synchronous — Resilience4j's target | planned | yes |
+| `payment-service` | 8084 | Mocked, synchronous, idempotent by orderId. **No database** | yes | yes |
 | MySQL | 3306 | **both** schemas on one instance | — | on the data VM |
-| Kafka | 9092 | `order.placed`, `inventory.reserved`, `inventory.failed` | — | on the data VM |
+| Kafka | 9092 | `order.placed`, `inventory.reserved`, `inventory.failed`, `order.confirmed`, `order.cancelled` | — | on the data VM |
 
 Note `discovery-service`'s application name is `discovery-server`, which does **not** match
 its directory name. That is deliberate but easy to trip over.
@@ -131,11 +131,11 @@ InventoryPlatformManagement/          <- git root
 ├── api-gateway-service/
 ├── order-service/
 ├── inventory-service/
-└── notification-service/
+├── notification-service/
+└── payment-service/
 ```
 
-Planned but not yet created: `payment-service/`, `deploy/k8s/`, `deploy/gcp/`,
-`docs/decisions/`.
+Planned but not yet created: `deploy/k8s/`, `deploy/gcp/`, `docs/decisions/`.
 
 Java packages are `com.demo.<service_name>` with **underscores**
 (e.g. `com.demo.inventory_service`), not the `com.karthik.*` used in the source PDF.
@@ -385,55 +385,65 @@ Ordered roughly by how much time each one costs when forgotten.
 13. **Gateway properties are `spring.cloud.gateway.server.webmvc.*`.** This project uses the
     MVC/Servlet gateway. Every tutorial using `spring.cloud.gateway.routes` is for the
     reactive one, and configuring that here fails silently — no routes, no error.
-14. **MySQL's cold init takes ~85s on this machine**, so a `start_period` below that makes a
+14. **Put a Resilience4j `fallbackMethod` on the OUTERMOST annotation.** The aspects nest
+    as `Retry(CircuitBreaker(call))`, so a fallback on `@CircuitBreaker` fires on the first
+    failure and returns normally — Retry then sees a success and never retries. The retry is
+    silently dead while the configuration still looks correct. Only a test that counts
+    requests arriving at the server catches this.
+15. **`@Lob` on a String needs an explicit `length`.** Without one Hibernate picks MySQL's
+    smallest text tier — `TINYTEXT`, 255 bytes — and inserts fail with *"Data truncation:
+    Data too long"*. Use `@Column(length = 1_000_000)` for `LONGTEXT`/`MEDIUMTEXT`. H2 does
+    not reproduce this, so unit tests cannot catch it; `ddl-auto: update` will not widen an
+    existing column either, so the table must be dropped or altered by hand.
+16. **MySQL's cold init takes ~85s on this machine**, so a `start_period` below that makes a
     perfectly healthy container report `unhealthy` while it is merely initialising.
-15. **The Windows MySQL service owns port 3306**, so Compose cannot bind it. Host ports are
+17. **The Windows MySQL service owns port 3306**, so Compose cannot bind it. Host ports are
     overridable: `ORDER_DB_PORT=3316 docker compose up -d`.
-16. **Never let the Kafka producer stamp Java type headers.** Event classes are duplicated
+18. **Never let the Kafka producer stamp Java type headers.** Event classes are duplicated
    per service, so `spring.json.add.type.headers` must stay `false`. Left on, the producer
    writes `__TypeId__: com.demo.order_service.events.OrderPlacedEvent`, and the consumer —
    which only has `com.demo.inventory_service.events.OrderPlacedEvent` — fails to
    deserialize every single message. Consumers use `StringDeserializer` plus a
    `StringJsonMessageConverter` bean, which takes the target type from the
    `@KafkaListener` method parameter instead.
-17. **`*IT` classes do not run under `./mvnw test`.** Surefire only picks up `*Test`,
+19. **`*IT` classes do not run under `./mvnw test`.** Surefire only picks up `*Test`,
    `Test*`, `*Tests`, `*TestCase`. The integration tests are named `*IT` and run under
    **`./mvnw verify`** via failsafe. A green `test` run therefore proves *less* than it
    looks — check which plugin actually executed.
-18. **Tests must set `spring.kafka.admin.auto-create: false`.** Otherwise every
+20. **Tests must set `spring.kafka.admin.auto-create: false`.** Otherwise every
    `@SpringBootTest` spends ~45 s watching `KafkaAdmin` retry the `NewTopic` beans against
    a broker that is not running. It is not a failure, just a silent 10x slowdown.
-19. **Running Kafka on Windows without Docker:** the `bin/windows/*.bat` scripts die with
+21. **Running Kafka on Windows without Docker:** the `bin/windows/*.bat` scripts die with
     *"The input line is too long"* — the expanded classpath exceeds cmd's 8191-char limit
     under any deep path. Bypass them and let the JVM expand the wildcard itself:
     `java -cp "<kafka>/libs/*" kafka.Kafka <config>` (and `kafka.tools.StorageTool` to
     format KRaft storage first). Also avoid passing `-Dlog4j.configuration=` through
     PowerShell, which mangles it.
-20. **Spring Boot 4 moved the test-slice annotations.** They are no longer under
+22. **Spring Boot 4 moved the test-slice annotations.** They are no longer under
    `org.springframework.boot.test.autoconfigure.*`:
    - `@DataJpaTest` → `org.springframework.boot.data.jpa.test.autoconfigure`
    - `@WebMvcTest` → `org.springframework.boot.webmvc.test.autoconfigure`
 
    Every tutorial online still shows the Boot 3 packages, so the import will look right and
    fail to resolve. `@MockitoBean` (not `@MockBean`) is likewise the current spelling.
-21. **DB passwords are `${MYSQL_PASSWORD:root}` placeholders — keep them that way.**
+23. **DB passwords are `${MYSQL_PASSWORD:root}` placeholders — keep them that way.**
    `config-repo/order-service.yaml` and `inventory-service.yaml` previously carried
    `password: "root"` in plaintext. Fixed 2026-08-25, and `config-repo`'s history was
    squashed to one commit before its first push, so the literal credential never reached
    GitHub at all. The `:root` default means local runs still need no env var. **Do not
    reintroduce a literal password** — `config-repo` is public, and history is forever once
    pushed. Phase 14 replaces the default with Secret Manager.
-22. **`java` on PATH is Java 8.** Use JDK 21: `JAVA_HOME=C:\Users\Karthik\.jdks\ms-21.0.12`.
+24. **`java` on PATH is Java 8.** Use JDK 21: `JAVA_HOME=C:\Users\Karthik\.jdks\ms-21.0.12`.
    `mvn` is not on PATH at all — use each module's `./mvnw`.
-23. **Both DBs share `localhost:3306`** when running against the host MySQL. Compose splits
+25. **Both DBs share `localhost:3306`** when running against the host MySQL. Compose splits
     them into genuinely separate instances (verified 2026-08-26). The design called for
     3306/3307. Fine locally;
    Compose and the GCP data VM will split the schemas properly. Be honest about this.
-24. **Eureka registration lags roughly 40 s after boot** (client replication interval). An
+26. **Eureka registration lags roughly 40 s after boot** (client replication interval). An
     empty `/eureka/apps` immediately after startup is normal, not a failure.
-25. Maven needs network on first run — don't pass `-o`.
-26. `.idea/` is intentionally untracked; `.run/` is intentionally tracked.
-27. **Part B toolchain is half-installed.** Docker Desktop 29.7.2 is present and working;
+27. Maven needs network on first run — don't pass `-o`.
+28. `.idea/` is intentionally untracked; `.run/` is intentionally tracked.
+29. **Part B toolchain is half-installed.** Docker Desktop 29.7.2 is present and working;
     `gcloud`, `kubectl`, `helm` and `terraform` are not. Phase 12 installs those.
     Note Docker's CLI is only on the **machine** PATH — a shell started before the install
     will not see it. Use the full path
@@ -470,6 +480,29 @@ A 200 with **empty** `propertySources` means the filename doesn't match
 ## 10. Change log
 
 Newest first. Add an entry for every meaningful change.
+
+### 2026-08-26 — Phase 8 complete: payment-service and Resilience4j
+- New `payment-service` module (port 8084): mocked, **idempotent by orderId**, switchable at
+  runtime between APPROVE / DECLINE / SLOW so the failure paths are demonstrable live.
+  5 tests, including concurrent retries producing exactly one payment.
+- `PaymentClient` in order-service: HTTP read timeout, retry with backoff, circuit breaker,
+  fallback. 5 integration tests against a stub that can be told to misbehave.
+- **The Saga now closes.** Approved → `CONFIRMED` → `OrderConfirmed` → inventory confirms
+  (stock ships, does not return to available). Declined or unavailable → `CANCELLED` →
+  `OrderCancelled` → inventory releases. Both settlement events go **through the outbox**, so
+  compensation survives inventory-service being down.
+- **Two real bugs, neither visible to a passing unit test:**
+  1. **The fallback silently disabled the retry.** Declared on `@CircuitBreaker`, which
+     Resilience4j nests *inside* `@Retry`, so the first failure hit the fallback, returned
+     normally, and Retry saw success. Only a test counting requests at the server found it.
+  2. **`outbox_event.payload` was TINYTEXT (255 bytes).** `@Lob` on a String with no length
+     makes Hibernate choose MySQL's smallest text tier. Latent since Phase 5 — OrderPlaced
+     payloads were ~200 chars and fit by luck. H2 does not reproduce the mapping.
+- 94 tests across five modules.
+- **The Phase 4 gap happened for real.** Three pre-fix orders are permanently stuck at
+  `INVENTORY_RESERVED` holding 6 units: `processed_event` committed, the settlement
+  transaction then failed, and redelivery correctly skipped the event. A reconciliation job
+  over stale `INVENTORY_RESERVED` orders is now a **required** item, not a nice-to-have.
 
 ### 2026-08-26 — Phase 7 complete: the API Gateway
 - Routes `/api/orders/**` to order-service and `/api/products/**`, `/api/inventory/**` to
