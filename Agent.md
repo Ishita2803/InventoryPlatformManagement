@@ -493,6 +493,23 @@ esourcesin\docker.exe` or start a new shell.
     Fine for a single-machine stack; the first thing to change when scaling out. Partition by
     `orderId` to keep per-order ordering.
 
+40. **Commit `mvnw` as executable or CI cannot run it.** Windows has no executable bit, so a
+    wrapper added from Windows lands in git as mode `100644` and every Linux runner fails with
+    `./mvnw: Permission denied` and exit code **126**. It cannot reproduce locally, because
+    Windows ignores the bit. Fix: `git update-index --chmod=+x <service>/mvnw`, then verify
+    with `git ls-files -s '*/mvnw'` — the mode must read `100755`.
+41. **Never point a BuildKit cache mount at all of `/root/.m2`.** That path contains
+    `wrapper/dists`, where the Maven Wrapper installs Maven itself, and `docker compose build`
+    builds in parallel. Several `mvnw` processes then race to install into one shared mount
+    and `mv` fails with *"unable to remove target: Directory not empty"*, leaving `mvnw` to
+    exit **127**. Cache `/root/.m2/repository` with `sharing=locked` instead: the repository
+    is the part worth sharing, and the wrapper dist installs harmlessly per service. Warm
+    local caches hide this completely.
+42. **GitHub Actions push runs register 2–6 minutes late on this repo.** Do not conclude that
+    a push failed to trigger CI, and do not manually dispatch while waiting — combined with
+    `cancel-in-progress`, a late push run carrying an *older* commit will cancel a dispatch
+    run carrying the fix, which looks exactly like the fix failing.
+
 ## 9. Startup order and verification (local)
 
 ```
@@ -521,6 +538,33 @@ A 200 with **empty** `propertySources` means the filename doesn't match
 ## 10. Change log
 
 Newest first. Add an entry for every meaningful change.
+
+### 2026-08-26 — CI actually run for the first time; two real bugs fixed
+- The `workflow` OAuth scope was refreshed, Phases 10 and 11 pushed, and the pipeline ran for
+  the first time. **Final state: all eight jobs green** (run `32993087529`, commit `30c81a7`)
+  — 103 tests, 0 failures, 0 errors, 0 skipped.
+- **Bug 1 — every `mvnw` was mode `100644`.** All seven matrix jobs failed identically with
+  `./mvnw: Permission denied`, exit code 126. Windows has no executable bit, so git recorded
+  the wrappers non-executable. Fixed with `git update-index --chmod=+x <svc>/mvnw` for all
+  seven, which sets the mode in the index without needing filesystem support.
+- **Bug 2 — the BuildKit cache mount raced under parallel builds.**
+  `--mount=type=cache,target=/root/.m2` covers `/root/.m2/wrapper/dists`, where the Maven
+  Wrapper installs Maven. `docker compose build` runs services in parallel, so seven `mvnw`
+  processes tried to install into one shared mount; `mv` onto a non-empty target failed and
+  `mvnw` exited 127. Now `--mount=type=cache,target=/root/.m2/repository,sharing=locked` —
+  the repository is the part worth sharing, and the wrapper dist installs per-service.
+- **Neither reproduced locally**, and neither is visible by reading the files. Windows ignores
+  the executable bit entirely, and the local build cache was warm from Phase 9, so the wrapper
+  skipped its install. **Phase 9's "8.3 minute cold build" was therefore not measured from a
+  genuinely cold cache.**
+- **Test count clarified:** 101 across the five application modules (51 order, 33 inventory,
+  6 notification, 6 gateway, 5 payment); **103 in CI**, the extra two being context-load smoke
+  tests in `config-service` and `discovery-service`. Docs now state both.
+- **Operational note on GitHub Actions here:** push-triggered runs register **2–6 minutes
+  late**. Manually dispatching while waiting caused two runs to collide — `cancel-in-progress`
+  correctly killed the newer dispatch in favour of a late-arriving push run carrying an
+  *older* commit, so a fix appeared to fail when it had simply never been tested. Push, then
+  wait; do not dispatch on top.
 
 ### 2026-08-26 — Phase 11 complete: documentation, ADRs, OpenAPI, and a real benchmark
 - **`README.md` written** (was a stub): architecture diagram, happy-path and failure-path

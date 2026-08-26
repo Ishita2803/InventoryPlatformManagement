@@ -438,9 +438,27 @@ built but **not pushed** — there is no registry until Phase 17.
 broker, real MySQL, or a real HTTP server. CI reports **103 across all seven modules**, the
 extra two being context-load smoke tests in `config-service` and `discovery-service`.
 
-**Verified on real runners 2026-08-26** (run `32991750979`): all seven matrix jobs green,
-103 tests, 0 failures, 0 errors, 0 skipped — including the Testcontainers MySQL tests, which
-needed no tmpfs tuning on GitHub's runners.
+**Verified on real runners 2026-08-26** (run `32993087529`): **all eight jobs green** —
+seven matrix builds plus the image build — with 103 tests, 0 failures, 0 errors, 0 skipped.
+The Testcontainers MySQL tests passed without needing the tmpfs tuning that was essential
+locally.
+
+**Running it for the first time found two real bugs, neither visible in the files.**
+
+1. **Every `mvnw` was committed mode `100644`.** All seven jobs died identically with
+   `./mvnw: Permission denied`, exit 126. Windows has no executable bit, so git recorded the
+   wrappers as non-executable and the Linux runners refused them. Fixed with
+   `git update-index --chmod=+x`.
+2. **The BuildKit cache mount covered all of `/root/.m2`** — including
+   `/root/.m2/wrapper/dists`, where the Maven Wrapper installs Maven itself. `docker compose
+   build` builds in parallel, so seven `mvnw` processes raced to install into one shared
+   mount; one partially populated the directory and the next one's `mv` onto a non-empty
+   target failed, leaving no Maven on PATH. Now caching only `/root/.m2/repository` with
+   `sharing=locked`.
+
+Both were invisible locally because this machine had state the runners do not: an ignored
+executable bit, and a build cache already warmed by Phase 9. The second means Phase 9's
+"8.3 minute cold build" was not as cold as it was labelled.
 
 ## Phase 11 — Documentation ✅ *(done 2026-08-26)*
 
