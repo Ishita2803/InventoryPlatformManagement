@@ -1,0 +1,591 @@
+openapi: 3.0.3
+
+# Hand-written, deliberately.
+#
+# springdoc-openapi has no Spring Boot 4 release at the time of writing -- the latest is
+# 2.8.6, which targets Boot 3 -- so annotation-driven generation is not available. Rather
+# than pin the whole platform back a major version for the sake of a generated document,
+# this file is maintained by hand and kept in step with the controllers.
+#
+# Verified against:
+#   order-service/.../controller/OrderController.java
+#   inventory-service/.../controller/InventoryController.java
+#   payment-service/.../controller/PaymentController.java
+#   order-service/.../exception/GlobalExceptionHandler.java
+
+info:
+  title: Order & Inventory Platform
+  version: "1.0.0"
+  description: |
+    An event-driven order and inventory platform.
+
+    **The important thing about this API is what it does not do synchronously.**
+    `POST /api/orders` validates the request, persists the order as `PENDING` and returns
+    immediately. It does not reserve stock, and it does not take payment. Those happen
+    asynchronously through Kafka, and the order reaches a terminal status some time later.
+
+    Clients therefore poll `GET /api/orders/{orderId}` (or consume the notification) rather
+    than expecting the response to `POST` to be final.
+
+    ### Order lifecycle
+
+    ```
+    PENDING ──► INVENTORY_RESERVED ──► CONFIRMED          (terminal)
+       │                  │
+       │                  └──────────► CANCELLED          (terminal, payment failed)
+       ├──► INVENTORY_FAILED                              (terminal, out of stock)
+       └──► CANCELLED                                     (terminal)
+    ```
+
+    Transitions are enforced in the domain model; an illegal transition returns `409`.
+
+servers:
+  - url: http://localhost:8080
+    description: API gateway — the only entry point clients should use
+  - url: http://localhost:8081
+    description: order-service directly (development only)
+  - url: http://localhost:8082
+    description: inventory-service directly (development only)
+  - url: http://localhost:8084
+    description: payment-service — NOT routed through the gateway; internal dependency
+
+tags:
+  - name: Orders
+    description: Placing and querying orders
+  - name: Inventory
+    description: Products, stock levels and reservations
+  - name: Payments
+    description: |
+      Mocked payment provider. Exposed here because its behaviour switch is how the saga's
+      failure and compensation paths are demonstrated at runtime. Not reachable through the
+      gateway.
+
+paths:
+
+  /api/orders:
+    post:
+      tags: [Orders]
+      summary: Place an order
+      description: |
+        Persists the order and its outbox event in a **single transaction**, then returns.
+        The returned status is always `PENDING` — stock has not been reserved and payment has
+        not been taken at the point this responds.
+      operationId: createOrder
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateOrderRequest'
+            examples:
+              singleLine:
+                summary: One line item
+                value:
+                  customerId: CUST-1
+                  items:
+                    - productId: 1
+                      warehouseId: WH-1
+                      quantity: 2
+                      unitPrice: 9.99
+      responses:
+        '201':
+          description: Order accepted and persisted as PENDING
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderResponse'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+    get:
+      tags: [Orders]
+      summary: List orders, newest first
+      operationId: listOrders
+      parameters:
+        - name: page
+          in: query
+          required: false
+          schema: { type: integer, minimum: 0, default: 0 }
+        - name: size
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+      responses:
+        '200':
+          description: A page of orders
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/OrderResponse'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+
+  /api/orders/{orderId}:
+    get:
+      tags: [Orders]
+      summary: Current state of one order
+      description: |
+        The endpoint clients poll after placing an order, until `status` is one of
+        `CONFIRMED`, `CANCELLED` or `INVENTORY_FAILED`.
+      operationId: getOrder
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: The order
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderResponse'
+        '404':
+          description: No order with that ID
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { error: ORDER_NOT_FOUND, message: "Order not found: 4f2c..." }
+
+  /api/products:
+    post:
+      tags: [Inventory]
+      summary: Register a product
+      description: SKU must be unique.
+      operationId: createProduct
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProductRequest' }
+      responses:
+        '201':
+          description: Product created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Product' }
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '409':
+          description: A product with that SKU already exists
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { error: DUPLICATE_SKU, message: "SKU already registered: WIDGET-1" }
+
+  /api/inventory:
+    post:
+      tags: [Inventory]
+      summary: Add stock for a product in a warehouse
+      operationId: addInventory
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/InventoryRequest' }
+      responses:
+        '201':
+          description: Stock recorded
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InventoryResponse' }
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '404':
+          description: No product with that ID
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { error: PRODUCT_NOT_FOUND, message: "Product not found: 99" }
+
+    get:
+      tags: [Inventory]
+      summary: Current stock for a product in a warehouse
+      description: |
+        `availableQuantity` is what can still be sold. `reservedQuantity` is held against
+        orders that have reserved but not yet settled. A confirmation moves units out of
+        `reserved` permanently; a cancellation moves them back into `available`.
+      operationId: getInventory
+      parameters:
+        - name: productId
+          in: query
+          required: true
+          schema: { type: integer, format: int64 }
+        - name: warehouseId
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Stock levels
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InventoryResponse' }
+        '404':
+          description: No stock record for that product and warehouse
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /api/inventory/reserve:
+    post:
+      tags: [Inventory]
+      summary: Reserve stock directly
+      description: |
+        The saga normally reserves stock by consuming `order.placed`, not by calling this.
+        It exists for tooling and tests.
+
+        Reservation is **idempotent per `(orderId, productId, warehouseId)`** — a repeat call
+        returns the existing reservation rather than reserving twice. Concurrent calls for the
+        same row are serialised by an optimistic lock and retried, so this cannot oversell.
+      operationId: reserveInventory
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ReserveInventoryRequest' }
+      responses:
+        '200':
+          description: Reserved, or already reserved
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InventoryResponse' }
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '409':
+          description: |
+            Insufficient stock (`INSUFFICIENT_INVENTORY`), a conflicting reservation
+            (`RESERVATION_CONFLICT`), or the optimistic-lock retry budget was exhausted under
+            sustained contention (`CONCURRENT_MODIFICATION`). All three are safe to retry.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { error: INSUFFICIENT_INVENTORY, message: "Only 1 unit available" }
+
+  /api/inventory/release:
+    post:
+      tags: [Inventory]
+      summary: Release all of an order's reservations
+      description: |
+        The compensating action. Moves units from `reserved` back to `available`. Invoked by
+        the saga when it consumes `order.cancelled`; idempotent, so replaying a cancellation
+        does not credit stock twice.
+      operationId: releaseInventory
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/OrderReferenceRequest' }
+      responses:
+        '200':
+          description: Reservations released (empty array if there were none)
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/InventoryResponse' }
+
+  /api/inventory/confirm:
+    post:
+      tags: [Inventory]
+      summary: Convert an order's reservations into a permanent deduction
+      description: |
+        Invoked by the saga when it consumes `order.confirmed`. Decrements `reserved` without
+        returning the units to `available`. Idempotent.
+      operationId: confirmReservation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/OrderReferenceRequest' }
+      responses:
+        '200':
+          description: Reservations confirmed
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/InventoryResponse' }
+
+  /api/payments:
+    post:
+      tags: [Payments]
+      summary: Take a payment
+      description: |
+        Idempotent by `orderId` — a repeated request returns the original result rather than
+        charging twice, which is what a real provider would enforce.
+      operationId: pay
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PaymentRequest' }
+      responses:
+        '200':
+          description: Payment processed — check `status` for APPROVED or DECLINED
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PaymentResponse' }
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+
+  /api/payments/behaviour:
+    post:
+      tags: [Payments]
+      summary: Change how the mock behaves, at runtime
+      description: |
+        How the saga's failure paths are demonstrated without editing code or restarting
+        anything.
+
+        | mode | effect |
+        |---|---|
+        | `APPROVE` | every payment succeeds (default) |
+        | `DECLINE` | every payment is declined → order reaches `CANCELLED`, stock returned |
+        | `SLOW` | responses delayed by `delayMs` → exercises timeouts and the circuit breaker |
+
+        To exercise connection refusal and retry exhaustion instead, stop the container:
+        `docker compose stop payment-service`.
+      operationId: setBehaviour
+      parameters:
+        - name: mode
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [APPROVE, DECLINE, SLOW]
+        - name: delayMs
+          in: query
+          required: false
+          description: Only meaningful with `mode=SLOW`.
+          schema: { type: integer, format: int64 }
+      responses:
+        '200':
+          description: Behaviour changed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  behaviour: { type: string }
+
+  /api/payments/reset:
+    post:
+      tags: [Payments]
+      summary: Clear recorded payments and restore the default behaviour
+      operationId: resetPayments
+      responses:
+        '200':
+          description: Reset
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  behaviour: { type: string }
+
+components:
+
+  responses:
+
+    ValidationFailed:
+      description: Request failed bean validation
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ValidationError' }
+          example:
+            error: VALIDATION_FAILED
+            message: Request validation failed
+            fieldErrors:
+              items[0].quantity: Quantity must be at least 1
+              customerId: Customer ID is required
+
+    ServiceUnavailable:
+      description: |
+        Returned by the gateway when the upstream service is unreachable. The gateway
+        converts a routing failure into a JSON body rather than letting a raw error escape.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example:
+            error: SERVICE_UNAVAILABLE
+            message: order-service is not reachable
+
+  schemas:
+
+    CreateOrderRequest:
+      type: object
+      required: [customerId, items]
+      properties:
+        customerId:
+          type: string
+          minLength: 1
+          example: CUST-1
+        items:
+          type: array
+          minItems: 1
+          items: { $ref: '#/components/schemas/OrderItemRequest' }
+
+    OrderItemRequest:
+      type: object
+      required: [productId, warehouseId, quantity, unitPrice]
+      properties:
+        productId: { type: integer, format: int64, example: 1 }
+        warehouseId: { type: string, minLength: 1, example: WH-1 }
+        quantity: { type: integer, minimum: 1, example: 2 }
+        unitPrice:
+          type: number
+          format: double
+          minimum: 0
+          description: At most two decimal places.
+          example: 9.99
+
+    OrderResponse:
+      type: object
+      properties:
+        orderId: { type: string, format: uuid }
+        customerId: { type: string }
+        status: { $ref: '#/components/schemas/OrderStatus' }
+        totalAmount:
+          type: number
+          format: double
+          description: Server-calculated sum of the line totals. Never taken from the client.
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/OrderItemResponse' }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+      example:
+        orderId: 3f8a1c2e-9b1d-4f6a-8e2b-7c5d0a1f4b93
+        customerId: CUST-1
+        status: PENDING
+        totalAmount: 19.98
+        items:
+          - productId: 1
+            warehouseId: WH-1
+            quantity: 2
+            unitPrice: 9.99
+            lineTotal: 19.98
+        createdAt: "2026-08-26T10:15:30Z"
+        updatedAt: "2026-08-26T10:15:30Z"
+
+    OrderItemResponse:
+      type: object
+      properties:
+        productId: { type: integer, format: int64 }
+        warehouseId: { type: string }
+        quantity: { type: integer }
+        unitPrice: { type: number, format: double }
+        lineTotal:
+          type: number
+          format: double
+          description: quantity × unitPrice, calculated server-side.
+
+    OrderStatus:
+      type: string
+      enum: [PENDING, INVENTORY_RESERVED, INVENTORY_FAILED, CONFIRMED, CANCELLED]
+      description: |
+        * `PENDING` — accepted and persisted; the saga has not started settling it.
+        * `INVENTORY_RESERVED` — stock is held; payment is next.
+        * `INVENTORY_FAILED` — insufficient stock. Terminal. Nothing to compensate.
+        * `CONFIRMED` — paid, and the reservation converted to a deduction. Terminal.
+        * `CANCELLED` — payment failed or was declined; stock released. Terminal.
+
+    ProductRequest:
+      type: object
+      required: [sku, name]
+      properties:
+        sku: { type: string, minLength: 1, example: WIDGET-1 }
+        name: { type: string, minLength: 1, example: Widget }
+
+    Product:
+      type: object
+      properties:
+        id: { type: integer, format: int64 }
+        sku: { type: string }
+        name: { type: string }
+
+    InventoryRequest:
+      type: object
+      required: [productId, warehouseId, quantity]
+      properties:
+        productId: { type: integer, format: int64 }
+        warehouseId: { type: string, minLength: 1 }
+        quantity: { type: integer, minimum: 0 }
+
+    InventoryResponse:
+      type: object
+      properties:
+        productId: { type: integer, format: int64 }
+        warehouseId: { type: string }
+        availableQuantity:
+          type: integer
+          description: Sellable now.
+        reservedQuantity:
+          type: integer
+          description: Held against orders that have not yet settled.
+      example:
+        productId: 1
+        warehouseId: WH-1
+        availableQuantity: 98
+        reservedQuantity: 2
+
+    ReserveInventoryRequest:
+      type: object
+      required: [orderId, productId, warehouseId, quantity]
+      properties:
+        orderId: { type: string, minLength: 1 }
+        productId: { type: integer, format: int64 }
+        warehouseId: { type: string, minLength: 1 }
+        quantity: { type: integer, minimum: 1 }
+
+    OrderReferenceRequest:
+      type: object
+      required: [orderId]
+      properties:
+        orderId: { type: string, minLength: 1 }
+
+    PaymentRequest:
+      type: object
+      required: [orderId, amount]
+      properties:
+        orderId: { type: string, minLength: 1 }
+        amount: { type: number, format: double, minimum: 0 }
+
+    PaymentResponse:
+      type: object
+      properties:
+        paymentId: { type: string }
+        orderId: { type: string }
+        amount: { type: number, format: double }
+        status:
+          type: string
+          enum: [APPROVED, DECLINED]
+        message: { type: string }
+        processedAt: { type: string, format: date-time }
+
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+          description: Stable machine-readable code.
+          example: ORDER_NOT_FOUND
+        message:
+          type: string
+          description: Human-readable detail. Not intended for programmatic use.
+
+    ValidationError:
+      allOf:
+        - $ref: '#/components/schemas/Error'
+        - type: object
+          properties:
+            fieldErrors:
+              type: object
+              additionalProperties: { type: string }
+              description: |
+                Field path to message. Nested paths come through intact, so a bad line item
+                reports as `items[0].quantity`.

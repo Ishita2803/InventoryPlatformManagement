@@ -11,10 +11,10 @@
 >    both drain the same outbox row; it's harmless because consumers are idempotent, and
 >    `SKIP LOCKED` is the clean fix" reads as senior. Being caught not knowing reads as
 >    junior.
-> 3. Everything below is **true as of Phases 0–10**. Status is tracked in
+> 3. Everything below is **true as of Phases 0–11**. Status is tracked in
 >    [`plan.md`](../plan.md); implementation detail in [`Agent.md`](../Agent.md).
 
-**Last updated:** 2026-08-26, after Phase 10.
+**Last updated:** 2026-08-26, after Phase 11.
 
 ---
 
@@ -507,6 +507,43 @@ not two.
 > the idempotency guarantee depends on, the `@Version` column. Everything else stays on H2
 > and runs in milliseconds.
 
+**"Have you measured it?"**
+> Yes, and the interesting part is that my first hypothesis was wrong.
+>
+> End-to-end p50 was 68 seconds, which is terrible. The obvious suspect was contention on the
+> stock row — all the test orders hit one product, so the optimistic-lock retry would be
+> serialising them. I tested it by spreading the identical load across 20 SKUs. It made no
+> difference: 8.1 orders/sec against 8.7. So I would have spent the afternoon tuning a retry
+> strategy that was not the problem.
+>
+> So I measured each stage separately. The gateway cost nothing — calling order-service
+> directly was the same speed. Payment answered in 5 milliseconds. That left the accept path
+> at about 600 milliseconds on an idle system, for what is three inserts in one transaction.
+>
+> Then I measured inside the database container, with no Java involved at all: 20 autocommit
+> inserts took 3.8 seconds. **190 milliseconds per commit.** MySQL was configured for full
+> durability — fsync of the redo log and the binlog on every commit — on Docker Desktop's
+> virtual disk. A single order needs about five commits across the two services, and the
+> Kafka consumers are single-threaded, so that is a serial second of pure disk waiting per
+> order. That one number explained every other number.
+>
+> The controlled test was to relax `innodb_flush_log_at_trx_commit` to 2 and `sync_binlog` to
+> 0 — both dynamic, no restart, nothing else touched. Throughput went from 8.1 to 119.4
+> orders per second. **14.7×**, from one storage setting. Then I put it back, because that is
+> a real durability trade-off and not something I would make silently on an order database.
+
+**"What did the load test tell you about correctness?"**
+> More than about performance, actually. A thousand orders at concurrency fifty: all thousand
+> reached CONFIRMED, and the final stock reconciled exactly. No oversell, nothing stuck. That
+> is the optimistic locking and the idempotency table under genuine concurrent load rather
+> than under a unit test that simulates it.
+>
+> It also showed the shape of the system clearly: about 110 orders/sec accepted but only
+> about 29 settled end to end. Acceptance is one local transaction; settlement is five
+> transactions and two network hops. The producer runs four times faster than the consumer —
+> and that is fine, precisely because the outbox makes the backlog durable. It queues, it
+> does not lose orders.
+
 **"Where does this break at 10× scale?"**
 > Three places. The `processed_event` tables grow unbounded — they need a retention job. The
 > single Kafka partition caps consumer parallelism. And the outbox poller in Phase 5 becomes a
@@ -626,6 +663,11 @@ Frame as problems solved, not technologies used.
 > **Caught a class of bug the fast tests structurally could not see** by adding
 > Testcontainers integration tests on the same MySQL image the platform runs on — after an
 > H2-invisible column-type defect reached three phases before surfacing.
+
+> **Profiled the platform end to end and found the bottleneck was storage `fsync`, not the
+> application** — after testing and *refuting* the obvious hypothesis. Demonstrated a
+> **14.7× throughput improvement** (8.1 → 119.4 orders/sec) from one durability setting, with
+> 1000 concurrent orders settling with zero oversell.
 
 **Do not yet write:** Kubernetes, GCP, deployment automation.
 

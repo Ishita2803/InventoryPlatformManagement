@@ -437,16 +437,40 @@ built but **not pushed** — there is no registry until Phase 17.
 6 gateway, 5 payment), of which 43 are integration tests against a real broker, real MySQL,
 or a real HTTP server.
 
-## Phase 11 — Documentation
+## Phase 11 — Documentation ✅ *(done 2026-08-26)*
 
-- [ ] README with architecture diagram, happy-path flow, **failure-path flow**
-- [ ] ADRs under `docs/decisions/` (start with: duplicated events, mocked payment,
-      Eureka dropped on GKE, MySQL on a VM over Cloud SQL)
-- [ ] OpenAPI/Swagger per service
-- [ ] Benchmark: push synthetic order volume through Kafka and **measure** throughput,
-      latency and retry rate. Quantify from real numbers — never invent them.
+- [x] README with architecture diagram, happy-path flow, **failure-path flow**
+- [x] ADRs under `docs/decisions/` — seven of them, each recording the rejected alternatives
+- [x] OpenAPI specification — `docs/openapi.yaml`
+- [x] Benchmark: real measured throughput, latency and outcome distribution
 
-**Exit:** someone who has never seen the repo can understand and run it from the README alone.
+**On the OpenAPI spec: it is hand-written, deliberately.** springdoc-openapi has no Spring
+Boot 4 release — the latest is 2.8.6, targeting Boot 3 — so annotation-driven generation is
+not available without pinning the whole platform back a major version. The spec is maintained
+by hand, validated as parsable with every `$ref` resolving, and its status codes were checked
+against the actual `@ExceptionHandler` methods rather than assumed.
+
+**The benchmark is the part worth reading.** `docs/benchmark/bench.py` drives synthetic load
+and `docs/benchmark/RESULTS.md` records four runs verbatim. The headline is not the numbers
+but the investigation: the obvious hypothesis — contention on a single stock row — was
+**tested and refuted** (spreading the same load across 20 SKUs changed nothing: 8.1 vs 8.7
+orders/sec). Measuring each stage separately showed the gateway cost nothing and payment
+answered in 5 ms, which left the accept path at ~600 ms for three inserts. The cause was
+`fsync`: **190 ms per commit** on Docker Desktop's virtual disk, measured inside the database
+container with no Java involved, and roughly five commits per order across single-threaded
+consumers. Relaxing one durability setting and changing nothing else made the platform
+**14.7× faster** — 8.1 → 119.4 orders/sec, end-to-end p50 70 s → 6.2 s. Durable settings were
+restored afterwards and verified.
+
+At 1000 orders: ~110 accepted/sec, ~29 fully settled/sec, **1000/1000 confirmed with zero
+oversell** and stock reconciling exactly — the idempotency and optimistic-locking machinery
+under real concurrent load rather than unit tests.
+
+Also documented honestly: every topic has **one partition**, so consumers cannot scale out
+today; a second `inventory-service` instance would sit idle.
+
+**Exit:** met. `README.md` takes someone from `git clone` to a confirmed order, and to a
+deliberately triggered compensation, without reading anything else.
 
 ---
 

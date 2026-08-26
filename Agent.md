@@ -115,7 +115,7 @@ InventoryPlatformManagement/          <- git root
 ├── docs/
 │   └── INTERVIEW-GUIDE.md         <- how to explain this project; keep in step
 ├── CLAUDE.md                         <- thin pointer to this file
-├── README.md                         <- still a stub (Phase 11)
+├── README.md                         <- full: architecture, flows, quickstart, measured perf
 ├── .gitignore
 ├── .gitmodules
 ├── docker-compose.yml             <- Kafka + 2x MySQL. Verified 2026-08-26
@@ -476,6 +476,23 @@ esourcesin\docker.exe` or start a new shell.
 
 ---
 
+37. **A commit costs ~190 ms on Docker Desktop's virtual disk.** With
+    `innodb_flush_log_at_trx_commit=1` and `sync_binlog=1`, every commit fsyncs twice. This
+    is *the* throughput bottleneck of the local stack — not the code, not Kafka, not the
+    optimistic lock. Measured directly with 20 autocommit inserts inside the container. Both
+    variables are dynamic, so a benchmark can relax them with `SET GLOBAL` and no restart;
+    restore them afterwards, and never relax them on anything real without deciding the
+    durability loss is acceptable.
+38. **`docker compose ps` does not show containers stuck in `Created`.** If an earlier `up`
+    was interrupted while waiting on a `depends_on: service_healthy` condition, Compose may
+    have created a container without ever starting it. It simply does not appear in the
+    default listing, so the stack looks like it has fewer services rather than broken ones.
+    Use `docker compose ps -a`.
+39. **Kafka has one partition per topic.** Consumer groups therefore cannot scale beyond one
+    active consumer, and adding a second service instance changes throughput by nothing.
+    Fine for a single-machine stack; the first thing to change when scaling out. Partition by
+    `orderId` to keep per-order ordering.
+
 ## 9. Startup order and verification (local)
 
 ```
@@ -504,6 +521,40 @@ A 200 with **empty** `propertySources` means the filename doesn't match
 ## 10. Change log
 
 Newest first. Add an entry for every meaningful change.
+
+### 2026-08-26 — Phase 11 complete: documentation, ADRs, OpenAPI, and a real benchmark
+- **`README.md` written** (was a stub): architecture diagram, happy-path and failure-path
+  sequence diagrams, quickstart from `git clone` to a confirmed order, how to trigger
+  compensation deliberately, port table, API table, measured performance, and an explicit
+  "what is not built" list.
+- **Seven ADRs** in `docs/decisions/`, each stating the rejected alternatives and the costs:
+  outbox, choreography, optimistic locking, `processed_event` idempotency, per-service event
+  classes, the mock payment service, gateway MVC.
+- **`docs/openapi.yaml` hand-written.** springdoc has no Boot 4 release (latest 2.8.6), so
+  generation is unavailable. Validated as parsable with all `$ref`s resolving; status codes
+  checked against the real `@ExceptionHandler` methods, which turned up two responses the
+  first draft had missed (`DUPLICATE_SKU` 409, `PRODUCT_NOT_FOUND` 404).
+- **Benchmark run for real** — `docs/benchmark/bench.py`, four runs recorded verbatim in
+  `docs/benchmark/RESULTS.md`.
+  - Hypothesis "throughput is limited by contention on the stock row" was **tested and
+    refuted**: 200 orders across 20 SKUs gave 8.1 orders/sec against 8.7 for a single SKU.
+  - Stage-by-stage measurement: gateway overhead ~nil (direct :8081 was the same speed),
+    payment 5 ms. That left ~600 ms for the accept path on an idle system.
+  - **Root cause: 190 ms per commit**, measured with 20 autocommit inserts *inside* the DB
+    container. `innodb_flush_log_at_trx_commit=1` + `sync_binlog=1` on Docker Desktop's
+    virtual disk. ~5 commits per order × single-threaded consumers explains the 68 s p50.
+  - Controlled test: `SET GLOBAL innodb_flush_log_at_trx_commit=2; SET GLOBAL sync_binlog=0`
+    (both dynamic, no restart, nothing else touched) → **14.7× throughput**, 8.1 → 119.4
+    orders/sec, POST p50 2271 → 189 ms, e2e p50 70038 → 6183 ms, 200/200 settled.
+    **Durable settings restored and verified afterwards.**
+  - 1000 orders / concurrency 50: 108.5 accepted/sec, ~29 settled/sec, **1000/1000 CONFIRMED,
+    zero oversell**, stock reconciled exactly.
+  - All five topics have **PartitionCount: 1** — consumers cannot scale out; a second
+    inventory instance would idle. Documented as the next scaling change.
+- **Two containers were found stuck in `Created`** at the start of this phase: an earlier
+  `docker compose up` had been interrupted while waiting on MySQL's cold init, so Compose
+  created `order-service` and `inventory-service` but never started them. `docker compose ps`
+  hides these — only `ps -a` shows them.
 
 ### 2026-08-26 — Phase 10 complete: Testcontainers and CI
 - **MySQL Testcontainers tests in both database-backed services**, written specifically to
