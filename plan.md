@@ -154,8 +154,9 @@ than sitting here untested.
 ## Phase 3 — Kafka and the first async flow ✅ *(done 2026-08-26)*
 
 - [x] `docker-compose.yml` — Kafka in **KRaft mode** (no ZooKeeper) plus two *separate*
-      MySQL instances (3306 / 3307), parameterised so the same file runs on the GCP data VM.
-      ⚠ **Written but never executed** — Docker is not installed on this machine. Unverified.
+      MySQL instances, parameterised so the same file runs on the GCP data VM.
+      **Verified 2026-08-26** once Docker was installed — and it did not work first time;
+      see the Phase 3 addendum below.
 - [x] Topics: `order.placed`, `inventory.reserved`, `inventory.failed`, declared as
       `NewTopic` beans rather than left to broker auto-creation
 - [x] Event **records**, separate from the JPA entities, duplicated per service, each
@@ -174,6 +175,20 @@ Jumping straight to `CONFIRMED` here would mean confirming orders nobody has pai
 `OrderTxService` (`@Transactional`), so the event is published strictly *after* commit —
 publishing inside the transaction would let inventory reserve stock for an order that then
 rolls back. The remaining dual-write window is documented in the code and closed in Phase 5.
+
+**Addendum, 2026-08-26 — the Compose file was wrong, and running it proved it.** Three
+defects that no amount of review had caught:
+
+1. **Kafka would not start at all.** `KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092` is rejected —
+   *"advertised.listeners cannot use the nonroutable meta-address 0.0.0.0"*. Fixed by
+   omitting the host: `PLAINTEXT://:9092`.
+2. **The Kafka volume held nothing.** Without `KAFKA_LOG_DIRS` the broker writes to
+   `/tmp/kraft-combined-logs`, so the named volume looked like persistence and was not.
+   This is the dangerous one — it fails silently, and only on container recreation.
+3. **MySQL reported unhealthy while starting normally.** A cold data-directory init measured
+   ~85s; `start_period` was 30s. Raised to 150s.
+
+Also parameterised the host ports, since a Windows MySQL service already owns 3306.
 
 **Exit:** met, verified against a **real broker and real MySQL**, not only in tests.
 `POST /api/orders` (qty 3, stock 10) → `PENDING` → `INVENTORY_RESERVED`, with a `RESERVED`

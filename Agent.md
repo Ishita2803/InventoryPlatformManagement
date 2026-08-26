@@ -75,7 +75,7 @@ not feature count or delivery speed. Concretely:
 | Resilience | Resilience4j *(dependency present, unused)* |
 | Build | Maven (wrapper per module; there is **no parent aggregator pom**) |
 | Boilerplate | Lombok |
-| Container | Docker *(compose file written, never run — no Docker installed)* |
+| Container | Docker Desktop 29.7.2. `docker-compose.yml` **verified working**; per-service Dockerfiles still to come (Phase 9) |
 | Orchestration | GKE Standard, zonal, Spot nodes *(not yet created)* |
 | Secrets | GCP Secret Manager via CSI driver *(not yet created)* |
 
@@ -118,7 +118,7 @@ InventoryPlatformManagement/          <- git root
 ├── README.md                         <- still a stub (Phase 11)
 ├── .gitignore
 ├── .gitmodules
-├── docker-compose.yml             <- Kafka + 2x MySQL. UNVERIFIED: never executed
+├── docker-compose.yml             <- Kafka + 2x MySQL. Verified 2026-08-26
 ├── .run/                             <- SHARED IntelliJ run configs (committed on purpose)
 │   └── config-service.run.xml
 ├── config-repo/                      <- GIT SUBMODULE (see §6)
@@ -135,7 +135,7 @@ InventoryPlatformManagement/          <- git root
 ```
 
 Planned but not yet created: `payment-service/`, `deploy/k8s/`, `deploy/gcp/`,
-`docs/decisions/`. `docker-compose.yml` now exists at the root but has never been run.
+`docs/decisions/`.
 
 Java packages are `com.demo.<service_name>` with **underscores**
 (e.g. `com.demo.inventory_service`), not the `com.karthik.*` used in the source PDF.
@@ -351,50 +351,66 @@ Ordered roughly by how much time each one costs when forgotten.
    into `ExponentialBackOff`, which now has `setMaxAttempts(long)` and built-in
    `setJitter(long)`. Every Spring Kafka retry/DLT tutorial online still imports the old
    class from `org.springframework.util.backoff`, and it will not resolve.
-10. **Never let the Kafka producer stamp Java type headers.** Event classes are duplicated
+10. **Kafka in Docker: never write `0.0.0.0` in a listener.** Use `PLAINTEXT://:9092`.
+    With `0.0.0.0` the broker refuses to start — *"advertised.listeners cannot use the
+    nonroutable meta-address 0.0.0.0"* — because when `advertised.listeners` is absent Kafka
+    derives it from `listeners`.
+11. **Set `KAFKA_LOG_DIRS` or the named volume is decoration.** The broker otherwise writes
+    to `/tmp/kraft-combined-logs`; the volume mounts, stays empty, and the data is lost on
+    recreate. Verify with `docker exec kafka grep log.dirs /opt/kafka/config/server.properties`.
+12. **MySQL's cold init takes ~85s on this machine**, so a `start_period` below that makes a
+    perfectly healthy container report `unhealthy` while it is merely initialising.
+13. **The Windows MySQL service owns port 3306**, so Compose cannot bind it. Host ports are
+    overridable: `ORDER_DB_PORT=3316 docker compose up -d`.
+14. **Never let the Kafka producer stamp Java type headers.** Event classes are duplicated
    per service, so `spring.json.add.type.headers` must stay `false`. Left on, the producer
    writes `__TypeId__: com.demo.order_service.events.OrderPlacedEvent`, and the consumer —
    which only has `com.demo.inventory_service.events.OrderPlacedEvent` — fails to
    deserialize every single message. Consumers use `StringDeserializer` plus a
    `StringJsonMessageConverter` bean, which takes the target type from the
    `@KafkaListener` method parameter instead.
-11. **`*IT` classes do not run under `./mvnw test`.** Surefire only picks up `*Test`,
+15. **`*IT` classes do not run under `./mvnw test`.** Surefire only picks up `*Test`,
    `Test*`, `*Tests`, `*TestCase`. The integration tests are named `*IT` and run under
    **`./mvnw verify`** via failsafe. A green `test` run therefore proves *less* than it
    looks — check which plugin actually executed.
-12. **Tests must set `spring.kafka.admin.auto-create: false`.** Otherwise every
+16. **Tests must set `spring.kafka.admin.auto-create: false`.** Otherwise every
    `@SpringBootTest` spends ~45 s watching `KafkaAdmin` retry the `NewTopic` beans against
    a broker that is not running. It is not a failure, just a silent 10x slowdown.
-13. **Running Kafka on Windows without Docker:** the `bin/windows/*.bat` scripts die with
+17. **Running Kafka on Windows without Docker:** the `bin/windows/*.bat` scripts die with
     *"The input line is too long"* — the expanded classpath exceeds cmd's 8191-char limit
     under any deep path. Bypass them and let the JVM expand the wildcard itself:
     `java -cp "<kafka>/libs/*" kafka.Kafka <config>` (and `kafka.tools.StorageTool` to
     format KRaft storage first). Also avoid passing `-Dlog4j.configuration=` through
     PowerShell, which mangles it.
-14. **Spring Boot 4 moved the test-slice annotations.** They are no longer under
+18. **Spring Boot 4 moved the test-slice annotations.** They are no longer under
    `org.springframework.boot.test.autoconfigure.*`:
    - `@DataJpaTest` → `org.springframework.boot.data.jpa.test.autoconfigure`
    - `@WebMvcTest` → `org.springframework.boot.webmvc.test.autoconfigure`
 
    Every tutorial online still shows the Boot 3 packages, so the import will look right and
    fail to resolve. `@MockitoBean` (not `@MockBean`) is likewise the current spelling.
-15. **DB passwords are `${MYSQL_PASSWORD:root}` placeholders — keep them that way.**
+19. **DB passwords are `${MYSQL_PASSWORD:root}` placeholders — keep them that way.**
    `config-repo/order-service.yaml` and `inventory-service.yaml` previously carried
    `password: "root"` in plaintext. Fixed 2026-08-25, and `config-repo`'s history was
    squashed to one commit before its first push, so the literal credential never reached
    GitHub at all. The `:root` default means local runs still need no env var. **Do not
    reintroduce a literal password** — `config-repo` is public, and history is forever once
    pushed. Phase 14 replaces the default with Secret Manager.
-16. **`java` on PATH is Java 8.** Use JDK 21: `JAVA_HOME=C:\Users\Karthik\.jdks\ms-21.0.12`.
+20. **`java` on PATH is Java 8.** Use JDK 21: `JAVA_HOME=C:\Users\Karthik\.jdks\ms-21.0.12`.
    `mvn` is not on PATH at all — use each module's `./mvnw`.
-17. **Both DBs share `localhost:3306`.** The design called for 3306/3307. Fine locally;
+21. **Both DBs share `localhost:3306`** when running against the host MySQL. Compose splits
+    them into genuinely separate instances (verified 2026-08-26). The design called for
+    3306/3307. Fine locally;
    Compose and the GCP data VM will split the schemas properly. Be honest about this.
-18. **Eureka registration lags roughly 40 s after boot** (client replication interval). An
+22. **Eureka registration lags roughly 40 s after boot** (client replication interval). An
     empty `/eureka/apps` immediately after startup is normal, not a failure.
-19. Maven needs network on first run — don't pass `-o`.
-20. `.idea/` is intentionally untracked; `.run/` is intentionally tracked.
-21. **The local toolchain for Part B does not exist yet.** No `gcloud`, `kubectl`, `docker`,
-    `helm` or `terraform` on this machine. Phase 12 installs them.
+23. Maven needs network on first run — don't pass `-o`.
+24. `.idea/` is intentionally untracked; `.run/` is intentionally tracked.
+25. **Part B toolchain is half-installed.** Docker Desktop 29.7.2 is present and working;
+    `gcloud`, `kubectl`, `helm` and `terraform` are not. Phase 12 installs those.
+    Note Docker's CLI is only on the **machine** PATH — a shell started before the install
+    will not see it. Use the full path
+    `C:\Program Files\Docker\Dockeresourcesin\docker.exe` or start a new shell.
 
 ---
 
@@ -426,6 +442,32 @@ A 200 with **empty** `propertySources` means the filename doesn't match
 ## 10. Change log
 
 Newest first. Add an entry for every meaningful change.
+
+### 2026-08-26 — Docker installed; the Compose file finally ran, and was wrong
+- Docker Desktop 29.7.2 is installed and working. The blocker was the **Virtual Machine
+  Platform** Windows feature being off — the CPU had virtualization enabled all along, and
+  WSL2 with Ubuntu was already present.
+- **Running `docker-compose.yml` for the first time found three defects.** It had been
+  reviewed and looked fine; none of these are visible by reading it:
+  1. **Kafka would not start.** `KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092` →
+     *"advertised.listeners cannot use the nonroutable meta-address 0.0.0.0"*. Fixed by
+     omitting the host entirely: `PLAINTEXT://:9092`.
+  2. **The Kafka named volume held nothing.** Without `KAFKA_LOG_DIRS` the broker writes to
+     `/tmp/kraft-combined-logs`. The volume existed, was mounted, and was empty — persistence
+     that silently is not persistence, and only discovered on container recreation.
+  3. **MySQL reported `unhealthy` while starting perfectly normally.** A cold data-directory
+     init measured ~85s here; `start_period` was 30s. Raised to 150s.
+- Host ports are now overridable (`KAFKA_PORT`, `ORDER_DB_PORT`, `INVENTORY_DB_PORT`) because
+  the Windows MySQL service already owns 3306.
+- **Verified properly, not just "containers are up":** all three healthy in ~50s; each MySQL
+  has only its own schema, with the 384 MB buffer pool applied; Kafka round-trips a message
+  and `advertised.listeners`/`log.dirs` are confirmed in the generated `server.properties`.
+- **Then ran the whole platform against it.** config-, inventory- and order-service pointed
+  at the containerised infrastructure purely through the env overrides added in Phase 3
+  (`ORDER_DB_URL`, `INVENTORY_DB_URL`, `KAFKA_BOOTSTRAP_SERVERS`) — no code or config change.
+  `POST /api/orders` → `INVENTORY_RESERVED`; in the containerised databases: `outbox_event`
+  `PUBLISHED` with `attempts=0`, one `RESERVED` reservation, one `OrderPlaced`
+  `processed_event`, stock 6/4 at `version=1`. Torn down with `docker compose down -v`.
 
 ### 2026-08-26 — Phase 5 complete: the dual-write window is closed
 - **`outbox_event` written in the same transaction as the order.** `createOrder` no longer

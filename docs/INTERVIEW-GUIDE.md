@@ -14,7 +14,7 @@
 > 3. Everything below is **true as of Phases 0–5**. Status is tracked in
 >    [`plan.md`](../plan.md); implementation detail in [`Agent.md`](../Agent.md).
 
-**Last updated:** 2026-08-26, after Phase 5.
+**Last updated:** 2026-08-26, after Phase 5 and the Docker Compose verification.
 
 ---
 
@@ -292,6 +292,11 @@ disjoint batch.
 >    `@ConditionalOnMissingBean(KafkaTemplate.class)`, a **raw-type** check that ignores
 >    generics. Everything wanting `KafkaTemplate<String, Object>` stopped resolving. Both
 >    templates are now declared explicitly.
+>
+> A third, from first running the Docker Compose file: the Kafka named volume was mounted,
+> looked right, and held **nothing**, because without `KAFKA_LOG_DIRS` the broker writes to
+> `/tmp`. Persistence that silently isn't persistence, invisible until a container is
+> recreated. Good answer to *"tell me about something that looked correct and wasn't."*
 
 ### 4.4 Poison messages and the DLT
 
@@ -468,16 +473,16 @@ not two.
 | Notification service consumer — skeleton only | 6 |
 | API Gateway routes — skeleton only, no routing | 7 |
 | Payment service, Resilience4j circuit breaker | 8 |
-| Dockerfiles; `docker-compose.yml` **written but never executed** | 9 |
+| Dockerfiles per service (the Compose file for Kafka + MySQL **is** verified working) | 9 |
 | Testcontainers, CI pipeline | 10 |
 | README, ADRs, OpenAPI, **any throughput benchmark** | 11 |
 | Everything GCP: GKE, Secret Manager, deployment | 12–18 |
 
 **Also be honest about these:**
 
-- **Both schemas are on one MySQL instance locally.** The design calls for separate instances;
-  the Compose file does split them. Say "one instance, two schemas locally — separated in
-  Compose" rather than implying full isolation.
+- **Both schemas are on one MySQL instance** when running against the host MySQL. The
+  Compose stack does split them into two genuinely separate instances, verified — neither
+  can see the other's schema. Say which one you mean.
 - **Single Kafka broker.** No replication, no HA. `acks=all` is set, which matters only once
   there's more than one broker.
 - **No authentication anywhere.** No auth on endpoints, no TLS, no Kafka SASL.

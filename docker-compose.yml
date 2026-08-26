@@ -12,8 +12,12 @@
 #   docker compose down          # keeps volumes
 #   docker compose down -v       # destroys the data too
 #
-# STATUS: written but NOT YET RUN. Docker is not installed on the development machine as of
-# 2026-08-26, so this has not been executed even once. Treat it as unverified until it has.
+# Host ports are overridable (KAFKA_PORT, ORDER_DB_PORT, INVENTORY_DB_PORT) so this can run
+# alongside a MySQL already bound to 3306 on the host — a Windows MySQL service will be.
+#
+# VERIFIED 2026-08-26 on Docker 29.7.2: all three containers reach healthy in ~50s, both
+# schemas are created in genuinely separate instances, Kafka round-trips a message, and the
+# full order flow runs against this stack end to end.
 
 services:
 
@@ -21,13 +25,17 @@ services:
     image: apache/kafka:3.9.0
     container_name: kafka
     ports:
-      - "9092:9092"
+      # Host port is overridable so this can run alongside anything already bound.
+      - "${KAFKA_PORT:-9092}:9092"
     environment:
       # KRaft: no ZooKeeper. A single node is both broker and controller.
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller
       KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
-      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+      # Bind to all interfaces by omitting the host, NOT by writing 0.0.0.0. When
+      # advertised.listeners is unset Kafka derives it from listeners, and it then refuses
+      # to start: "advertised.listeners cannot use the nonroutable meta-address 0.0.0.0".
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
@@ -45,6 +53,10 @@ services:
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
 
+      # Without this the broker writes to /tmp/kraft-combined-logs and the named volume
+      # below holds nothing -- the data looks persisted and silently is not.
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+
       # Sized for a shared 4 GB VM rather than a dedicated machine.
       KAFKA_HEAP_OPTS: ${KAFKA_HEAP_OPTS:--Xms512m -Xmx768m}
     volumes:
@@ -60,7 +72,9 @@ services:
     image: mysql:8.0
     container_name: order-mysql
     ports:
-      - "3306:3306"
+      # Override ORDER_DB_PORT if a MySQL service is already bound to 3306 on the host --
+      # a Windows MySQL install will be, and the bind failure is not obvious from the error.
+      - "${ORDER_DB_PORT:-3306}:3306"
     environment:
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root}
       MYSQL_DATABASE: order_db
@@ -75,7 +89,10 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
-      start_period: 30s
+      # A cold first run initialises the data directory, which measured ~85s on this
+      # machine. With the old 30s the container reported unhealthy while it was simply
+      # still starting.
+      start_period: 150s
 
   # A genuinely separate instance, not a second schema on the first. Two services sharing
   # one database is the thing microservices are supposed to avoid, and running them apart
@@ -85,7 +102,7 @@ services:
     image: mysql:8.0
     container_name: inventory-mysql
     ports:
-      - "3307:3306"
+      - "${INVENTORY_DB_PORT:-3307}:3306"
     environment:
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root}
       MYSQL_DATABASE: inventory_db
@@ -98,7 +115,10 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
-      start_period: 30s
+      # A cold first run initialises the data directory, which measured ~85s on this
+      # machine. With the old 30s the container reported unhealthy while it was simply
+      # still starting.
+      start_period: 150s
 
 volumes:
   kafka-data:
