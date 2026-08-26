@@ -285,15 +285,36 @@ second for qty 999 produced an `ORDER_FAILED` email carrying the real reason fro
 correct status in `order_db` at the same time, which is what proves the two consumer groups
 each received every event.
 
-## Phase 7 — API Gateway
+## Phase 7 — API Gateway ✅ *(done 2026-08-26)*
 
-- [ ] Routes for `/api/orders/**` and `/api/inventory/**`
-- [ ] **Write routes profile-switched from day one:** `lb://ORDER-SERVICE` under the
-      default (Eureka) profile, `http://order-service:8081` under the `k8s` profile.
-      Doing this now avoids reworking the gateway in Phase 15.
-- [ ] Correlation-ID filter, request logging, global error handling
+- [x] Routes for `/api/orders/**` → order-service and `/api/products/**`, `/api/inventory/**`
+      → inventory-service
+- [x] **Profile-switched from day one.** `api-gateway-service.yaml` uses `lb://` through
+      Eureka; `api-gateway-service-k8s.yaml` uses Kubernetes Service DNS and disables the
+      Eureka client. Both verified being served by Config Server. Phase 15 changes a profile,
+      not code.
+- [x] `CorrelationIdFilter` — honours an incoming `X-Correlation-Id` or generates one, puts
+      it in the MDC, **forwards it downstream** via a request wrapper, returns it to the
+      caller, and logs method/path/status/duration
+- [x] `GatewayExceptionHandler` — an unreachable downstream is **503 with JSON**, carrying
+      the correlation id, rather than a 500 or Spring's HTML error page
+- [x] 6 tests (1 context + 5 integration against a real stub HTTP server)
 
-**Exit:** every client call goes through `:8080`; no direct service ports needed.
+**Note the property namespace:** `spring.cloud.gateway.server.webmvc.routes`. This is the
+MVC gateway; every example using `spring.cloud.gateway.routes` targets the reactive one and
+silently does nothing here.
+
+**Exit:** met. The complete flow ran through `:8080` alone with all six services up —
+`POST /api/products`, `POST /api/inventory`, `POST /api/orders`, polling
+`GET /api/orders/{id}` to `INVENTORY_RESERVED`, and `GET /api/inventory` showing 6/4. A
+validation error still surfaced as a 400 with field errors; an unrouted path returned 404;
+and with inventory-service killed, the gateway returned **503 JSON** with a quotable
+correlation id.
+
+**Honest limitation:** the correlation id is generated and *forwarded* (proved in the IT
+against a stub that inspects the received header), but the downstream services do not yet
+**log** it — they have no correlation filter of their own — so the trail currently stops at
+the gateway. Phase 9's structured logging with `traceId` completes it.
 
 ## Phase 8 — Payment Service + Resilience4j
 

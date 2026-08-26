@@ -85,7 +85,14 @@ services:
     volumes:
       - order-mysql-data:/var/lib/mysql
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-p${MYSQL_ROOT_PASSWORD:-root}"]
+      # --protocol=TCP is essential, not tidiness. "-h localhost" connects over the unix
+      # SOCKET, and the entrypoint's data-directory init runs a temporary server that
+      # listens on the socket with "port: 0" -- no TCP listener at all. The socket check
+      # therefore passes, Docker reports the container healthy, and then MySQL shuts that
+      # temporary server down and starts the real one. A client connecting in that window
+      # gets "Communications link failure". Checking the port clients actually use means
+      # healthy means reachable.
+      test: ["CMD", "mysqladmin", "ping", "--protocol=TCP", "-h", "127.0.0.1", "-P", "3306", "-uroot", "-p${MYSQL_ROOT_PASSWORD:-root}"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -113,7 +120,14 @@ services:
     volumes:
       - inventory-mysql-data:/var/lib/mysql
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-p${MYSQL_ROOT_PASSWORD:-root}"]
+      # --protocol=TCP is essential, not tidiness. "-h localhost" connects over the unix
+      # SOCKET, and the entrypoint's data-directory init runs a temporary server that
+      # listens on the socket with "port: 0" -- no TCP listener at all. The socket check
+      # therefore passes, Docker reports the container healthy, and then MySQL shuts that
+      # temporary server down and starts the real one. A client connecting in that window
+      # gets "Communications link failure". Checking the port clients actually use means
+      # healthy means reachable.
+      test: ["CMD", "mysqladmin", "ping", "--protocol=TCP", "-h", "127.0.0.1", "-P", "3306", "-uroot", "-p${MYSQL_ROOT_PASSWORD:-root}"]
       interval: 10s
       timeout: 5s
       retries: 10

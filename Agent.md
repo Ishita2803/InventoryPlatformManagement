@@ -72,7 +72,7 @@ not feature count or delivery speed. Concretely:
 | Discovery | Eureka — **local only**, dropped on GKE (see §7) |
 | Config | Spring Cloud Config, git backend |
 | Gateway | Spring Cloud Gateway **MVC** (`spring-cloud-starter-gateway-server-webmvc`) |
-| Resilience | Resilience4j *(dependency present, unused)* |
+| Resilience | Resilience4j *(dependency present, unused — Phase 8)* |
 | Build | Maven (wrapper per module; there is **no parent aggregator pom**) |
 | Boilerplate | Lombok |
 | Container | Docker Desktop 29.7.2. `docker-compose.yml` **verified working**; per-service Dockerfiles still to come (Phase 9) |
@@ -229,8 +229,16 @@ Entities live in a `models` package, not `entity`.
 - Does **not** deduplicate; a redelivery sends a second email, and a test asserts it.
 - 6 tests (3 unit + 3 IT)
 
-### `api-gateway-service` — skeleton
-Application class only, and a config client. **No routes yet** — Phase 7.
+### `api-gateway-service` — Phase 7 complete
+- Routes in **config**, not code: `/api/orders/**` → order-service,
+  `/api/products/**` + `/api/inventory/**` → inventory-service
+- **Two route sets by profile** — `lb://` (Eureka) by default,
+  Service DNS under `k8s`, both served by Config Server
+- `filter/CorrelationIdFilter` — honour-or-generate `X-Correlation-Id`, MDC, forwarded
+  downstream through an `HttpServletRequestWrapper`, echoed to the caller, request logged
+- `exception/GatewayExceptionHandler` — unreachable downstream → **503 JSON**, not 500/HTML
+- Property namespace is `spring.cloud.gateway.server.webmvc.*` (MVC gateway, not reactive)
+- 6 tests (1 context + 5 IT against a stub HTTP server)
 
 ### `discovery-service`, `config-service` — working
 See §8 for the Config Server's working-directory constraint.
@@ -369,55 +377,63 @@ Ordered roughly by how much time each one costs when forgotten.
 11. **Set `KAFKA_LOG_DIRS` or the named volume is decoration.** The broker otherwise writes
     to `/tmp/kraft-combined-logs`; the volume mounts, stays empty, and the data is lost on
     recreate. Verify with `docker exec kafka grep log.dirs /opt/kafka/config/server.properties`.
-12. **MySQL's cold init takes ~85s on this machine**, so a `start_period` below that makes a
+12. **A MySQL healthcheck must force TCP.** `mysqladmin ping -h localhost` uses the unix
+    **socket**, and the entrypoint's init runs a temporary server on `port: 0` — socket
+    only, no TCP — before restarting the real one. The socket check passes, Docker reports
+    healthy, and a client connecting in that window gets "Communications link failure".
+    Use `--protocol=TCP -h 127.0.0.1 -P 3306`.
+13. **Gateway properties are `spring.cloud.gateway.server.webmvc.*`.** This project uses the
+    MVC/Servlet gateway. Every tutorial using `spring.cloud.gateway.routes` is for the
+    reactive one, and configuring that here fails silently — no routes, no error.
+14. **MySQL's cold init takes ~85s on this machine**, so a `start_period` below that makes a
     perfectly healthy container report `unhealthy` while it is merely initialising.
-13. **The Windows MySQL service owns port 3306**, so Compose cannot bind it. Host ports are
+15. **The Windows MySQL service owns port 3306**, so Compose cannot bind it. Host ports are
     overridable: `ORDER_DB_PORT=3316 docker compose up -d`.
-14. **Never let the Kafka producer stamp Java type headers.** Event classes are duplicated
+16. **Never let the Kafka producer stamp Java type headers.** Event classes are duplicated
    per service, so `spring.json.add.type.headers` must stay `false`. Left on, the producer
    writes `__TypeId__: com.demo.order_service.events.OrderPlacedEvent`, and the consumer —
    which only has `com.demo.inventory_service.events.OrderPlacedEvent` — fails to
    deserialize every single message. Consumers use `StringDeserializer` plus a
    `StringJsonMessageConverter` bean, which takes the target type from the
    `@KafkaListener` method parameter instead.
-15. **`*IT` classes do not run under `./mvnw test`.** Surefire only picks up `*Test`,
+17. **`*IT` classes do not run under `./mvnw test`.** Surefire only picks up `*Test`,
    `Test*`, `*Tests`, `*TestCase`. The integration tests are named `*IT` and run under
    **`./mvnw verify`** via failsafe. A green `test` run therefore proves *less* than it
    looks — check which plugin actually executed.
-16. **Tests must set `spring.kafka.admin.auto-create: false`.** Otherwise every
+18. **Tests must set `spring.kafka.admin.auto-create: false`.** Otherwise every
    `@SpringBootTest` spends ~45 s watching `KafkaAdmin` retry the `NewTopic` beans against
    a broker that is not running. It is not a failure, just a silent 10x slowdown.
-17. **Running Kafka on Windows without Docker:** the `bin/windows/*.bat` scripts die with
+19. **Running Kafka on Windows without Docker:** the `bin/windows/*.bat` scripts die with
     *"The input line is too long"* — the expanded classpath exceeds cmd's 8191-char limit
     under any deep path. Bypass them and let the JVM expand the wildcard itself:
     `java -cp "<kafka>/libs/*" kafka.Kafka <config>` (and `kafka.tools.StorageTool` to
     format KRaft storage first). Also avoid passing `-Dlog4j.configuration=` through
     PowerShell, which mangles it.
-18. **Spring Boot 4 moved the test-slice annotations.** They are no longer under
+20. **Spring Boot 4 moved the test-slice annotations.** They are no longer under
    `org.springframework.boot.test.autoconfigure.*`:
    - `@DataJpaTest` → `org.springframework.boot.data.jpa.test.autoconfigure`
    - `@WebMvcTest` → `org.springframework.boot.webmvc.test.autoconfigure`
 
    Every tutorial online still shows the Boot 3 packages, so the import will look right and
    fail to resolve. `@MockitoBean` (not `@MockBean`) is likewise the current spelling.
-19. **DB passwords are `${MYSQL_PASSWORD:root}` placeholders — keep them that way.**
+21. **DB passwords are `${MYSQL_PASSWORD:root}` placeholders — keep them that way.**
    `config-repo/order-service.yaml` and `inventory-service.yaml` previously carried
    `password: "root"` in plaintext. Fixed 2026-08-25, and `config-repo`'s history was
    squashed to one commit before its first push, so the literal credential never reached
    GitHub at all. The `:root` default means local runs still need no env var. **Do not
    reintroduce a literal password** — `config-repo` is public, and history is forever once
    pushed. Phase 14 replaces the default with Secret Manager.
-20. **`java` on PATH is Java 8.** Use JDK 21: `JAVA_HOME=C:\Users\Karthik\.jdks\ms-21.0.12`.
+22. **`java` on PATH is Java 8.** Use JDK 21: `JAVA_HOME=C:\Users\Karthik\.jdks\ms-21.0.12`.
    `mvn` is not on PATH at all — use each module's `./mvnw`.
-21. **Both DBs share `localhost:3306`** when running against the host MySQL. Compose splits
+23. **Both DBs share `localhost:3306`** when running against the host MySQL. Compose splits
     them into genuinely separate instances (verified 2026-08-26). The design called for
     3306/3307. Fine locally;
    Compose and the GCP data VM will split the schemas properly. Be honest about this.
-22. **Eureka registration lags roughly 40 s after boot** (client replication interval). An
+24. **Eureka registration lags roughly 40 s after boot** (client replication interval). An
     empty `/eureka/apps` immediately after startup is normal, not a failure.
-23. Maven needs network on first run — don't pass `-o`.
-24. `.idea/` is intentionally untracked; `.run/` is intentionally tracked.
-25. **Part B toolchain is half-installed.** Docker Desktop 29.7.2 is present and working;
+25. Maven needs network on first run — don't pass `-o`.
+26. `.idea/` is intentionally untracked; `.run/` is intentionally tracked.
+27. **Part B toolchain is half-installed.** Docker Desktop 29.7.2 is present and working;
     `gcloud`, `kubectl`, `helm` and `terraform` are not. Phase 12 installs those.
     Note Docker's CLI is only on the **machine** PATH — a shell started before the install
     will not see it. Use the full path
@@ -454,6 +470,30 @@ A 200 with **empty** `propertySources` means the filename doesn't match
 ## 10. Change log
 
 Newest first. Add an entry for every meaningful change.
+
+### 2026-08-26 — Phase 7 complete: the API Gateway
+- Routes `/api/orders/**` to order-service and `/api/products/**`, `/api/inventory/**` to
+  inventory-service. **6 tests** (1 context + 5 IT against a real stub HTTP server).
+- **Routes are profile-switched, in config, from day one.** `api-gateway-service.yaml` uses
+  `lb://` via Eureka; `api-gateway-service-k8s.yaml` uses Service DNS with the Eureka client
+  disabled. Both confirmed being served by Config Server. Phase 15 flips a profile rather
+  than editing Java.
+- `CorrelationIdFilter` honours an incoming `X-Correlation-Id` or mints one, puts it in the
+  MDC, **wraps the request so it is forwarded downstream**, returns it to the caller, and
+  logs method/path/status/duration.
+- `GatewayExceptionHandler`: an unreachable downstream is **503 with JSON** carrying the
+  correlation id — not a 500, and not Spring's HTML error page.
+- **Found a real healthcheck bug while running the full stack.** Both order- and
+  inventory-service failed at startup with "Communications link failure" even though Compose
+  reported MySQL `healthy`. Cause: `mysqladmin ping -h localhost` uses the **unix socket**,
+  and the entrypoint's data-directory init runs a *temporary* server on `port: 0` — socket
+  only, no TCP listener — before shutting it down and starting the real one. The healthcheck
+  passed against the temporary server. Fixed with `--protocol=TCP -h 127.0.0.1 -P 3306`, so
+  healthy now means reachable by the port clients actually use. This would have made Phase
+  9's `depends_on: condition: service_healthy` unreliable in a way that looked like a flake.
+- **Limitation, recorded not hidden:** the correlation id is forwarded (proved in the IT
+  against a stub that inspects the header) but the downstream services do not yet *log* it,
+  so the trail stops at the gateway until Phase 9.
 
 ### 2026-08-26 — Phase 6 complete: notification-service
 - Consumes `inventory.reserved` / `inventory.failed` and emits a mock email. **6 tests**

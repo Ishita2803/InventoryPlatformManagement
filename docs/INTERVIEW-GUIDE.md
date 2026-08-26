@@ -11,10 +11,10 @@
 >    both drain the same outbox row; it's harmless because consumers are idempotent, and
 >    `SKIP LOCKED` is the clean fix" reads as senior. Being caught not knowing reads as
 >    junior.
-> 3. Everything below is **true as of Phases 0–6**. Status is tracked in
+> 3. Everything below is **true as of Phases 0–7**. Status is tracked in
 >    [`plan.md`](../plan.md); implementation detail in [`Agent.md`](../Agent.md).
 
-**Last updated:** 2026-08-26, after Phase 6.
+**Last updated:** 2026-08-26, after Phase 7.
 
 ---
 
@@ -88,8 +88,11 @@ Draw this. It's the whole system in six boxes:
 Notification-service also subscribes to those two result topics, under its **own consumer
 group**, so it receives every event too and emails the customer.
 
-Then say: *"Config Server and Eureka sit alongside for configuration and discovery. Gateway
-and payment are planned but not built yet."* — honest, and it pre-empts the
+Everything enters through the **gateway on :8080** — it routes by path, stamps a correlation
+id on every request, and turns a dead downstream into a 503 rather than a stack trace.
+
+Then say: *"Config Server and Eureka sit alongside for configuration and discovery. Payment
+is planned but not built yet."* — honest, and it pre-empts the
 question.
 
 ---
@@ -104,7 +107,7 @@ question.
 | `discovery-service` | 8761 | **Built** | Eureka server | Service discovery locally. **Dropped on GKE** — Kubernetes DNS already does this. |
 | Kafka | 9092 | **Running** | 3 topics + DLTs, KRaft mode | The decoupling. No ZooKeeper — KRaft is the modern setup. |
 | MySQL | 3306 | **Running** | `order_db`, `inventory_db` | A database per service. Currently one instance, two schemas — see honesty section. |
-| `api-gateway-service` | 8080 | **Skeleton** | Single entry point | Planned Phase 7. **Application class only, no routes.** |
+| `api-gateway-service` | 8080 | **Built** | Single entry point; routes, correlation ids, error translation | One public surface instead of five. Routes live in **config**, switchable to Kubernetes DNS by profile. |
 | `notification-service` | 8083 | **Built** | Consumes both result topics, sends a mock email | Proves the events are genuinely reusable: adding a whole new consumer required changing neither producer. Has **no database at all**. |
 | `payment-service` | — | **Not created** | Mocked, synchronous | Planned Phase 8. Exists to give Resilience4j a real target. |
 
@@ -394,8 +397,8 @@ processed_event  (same shape as above)
 
 | Fact | Value |
 |---|---|
-| Tests | **77** — 42 order-service, 29 inventory-service, 6 notification-service |
-| Test split | 57 unit/slice, 20 integration against a real embedded broker |
+| Tests | **83** — 42 order, 29 inventory, 6 notification, 6 gateway |
+| Test split | 58 unit/slice, 25 integration (embedded Kafka, real DBs, a stub HTTP server) |
 | Optimistic-lock retry | 4 attempts, exponential backoff with jitter |
 | Kafka consumer retry | 3 attempts, then DLT |
 | Outbox publish retry | 10 attempts (3 in tests), then quarantined as `FAILED` |
@@ -462,6 +465,22 @@ not two.
 > so running Eureka there would be redundant infrastructure. It stays for local runs where
 > there's no cluster.
 
+**"Why put routes in config rather than code?"**
+> So the same jar runs locally and in Kubernetes. Locally the gateway resolves `lb://order-service`
+> through Eureka; under the `k8s` profile the identical route points at `http://order-service:8081`,
+> Kubernetes Service DNS, with the Eureka client switched off. If discovery were hard-coded,
+> moving to the cluster would mean editing and redeploying the gateway rather than selecting
+> a profile.
+
+**"What does the correlation id actually buy you?"**
+> Without it a failed request is three unrelated log lines in three services. The gateway
+> honours an incoming `X-Correlation-Id` or mints one, puts it in the MDC so it appears on
+> every gateway log line, forwards it downstream, and returns it to the caller — so a
+> customer quoting an id is enough to find the request.
+>
+> *Be honest about the limit:* the downstream services receive it but don't yet log it, so
+> today the trail stops at the gateway. Micrometer Tracing in Phase 9 closes that.
+
 **"What would you do differently?"**
 > Build the outbox before the plain publish rather than after — I knowingly shipped a
 > dual-write window I then had to document. And I'd verify the Docker Compose file earlier
@@ -473,7 +492,6 @@ not two.
 
 | Not built | Phase |
 |---|---|
-| API Gateway routes — skeleton only, no routing | 7 |
 | Payment service, Resilience4j circuit breaker | 8 |
 | Dockerfiles per service (the Compose file for Kafka + MySQL **is** verified working) | 9 |
 | Testcontainers, CI pipeline | 10 |

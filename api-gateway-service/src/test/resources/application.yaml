@@ -1,0 +1,25 @@
+# Test configuration. Shadows src/main/resources/application.yaml, whose non-optional
+# `spring.config.import: configserver:...` would otherwise require Config Server to be up.
+#
+# Routes are NOT defined here: the integration test registers them dynamically, because the
+# stub server's port is only known at runtime.
+
+spring:
+  application:
+    name: api-gateway-service
+
+  cloud:
+    config:
+      enabled: false
+    discovery:
+      enabled: false
+
+eureka:
+  client:
+    enabled: false
+    register-with-eureka: false
+    fetch-registry: false
+
+logging:
+  pattern:
+    level: "%5p [${spring.application.name:},%X{correlationId:-}]"
