@@ -385,79 +385,89 @@ Ordered roughly by how much time each one costs when forgotten.
 13. **Gateway properties are `spring.cloud.gateway.server.webmvc.*`.** This project uses the
     MVC/Servlet gateway. Every tutorial using `spring.cloud.gateway.routes` is for the
     reactive one, and configuring that here fails silently — no routes, no error.
-14. **Kafka in Compose needs TWO listeners.** A client reconnects to the *advertised*
+14. **Testcontainers 2.x renamed every module artifact.** `org.testcontainers:mysql` does
+    not exist at 2.0.5 — it is `testcontainers-mysql`, likewise
+    `testcontainers-junit-jupiter`. The `testcontainers-bom` must also be imported: the Boot
+    parent defines `testcontainers.version` but does not manage the artifacts. Every
+    tutorial online still shows the 1.x coordinates.
+15. **Give a MySQL Testcontainer a tmpfs data directory.** On-disk init takes 85-235s here
+    and Testcontainers connects during the entrypoint's temporary server, failing with
+    "Communications link failure" after a long timeout.
+    `.withTmpFs(Map.of("/var/lib/mysql", "rw"))` cuts it to seconds; tests need no
+    durability.
+16. **Kafka in Compose needs TWO listeners.** A client reconnects to the *advertised*
     address, so containers need `kafka:9092` and host processes need `localhost:29092`. One
     advertised address cannot serve both. **The host port is 29092, not 9092.**
-15. **`extract --layers --launcher` produces no jar.** The entrypoint is
+17. **`extract --layers --launcher` produces no jar.** The entrypoint is
     `java org.springframework.boot.loader.launch.JarLauncher` from the extracted directory,
     not `java -jar app.jar`.
-16. **`MaxRAMPercentage` does nothing without a container memory limit.** The JVM otherwise
+18. **`MaxRAMPercentage` does nothing without a container memory limit.** The JVM otherwise
     sees the whole host. Note `free` inside a container still reports host RAM; the JVM
     reads the cgroup limit, so trust `-XX:+PrintFlagsFinal`, not `free`.
-17. **A MySQL container killed mid-init leaves a corrupt data directory.** *"Cannot create
+19. **A MySQL container killed mid-init leaves a corrupt data directory.** *"Cannot create
     redo log files because data files are corrupt"* — no restart recovers it, the volume
     must be deleted.
-18. **After recreating a service, the gateway can 404 briefly** until its Eureka registry
+20. **After recreating a service, the gateway can 404 briefly** until its Eureka registry
     cache refreshes. Registry propagation, not a routing bug.
-19. **Put a Resilience4j `fallbackMethod` on the OUTERMOST annotation.** The aspects nest
+21. **Put a Resilience4j `fallbackMethod` on the OUTERMOST annotation.** The aspects nest
     as `Retry(CircuitBreaker(call))`, so a fallback on `@CircuitBreaker` fires on the first
     failure and returns normally — Retry then sees a success and never retries. The retry is
     silently dead while the configuration still looks correct. Only a test that counts
     requests arriving at the server catches this.
-20. **`@Lob` on a String needs an explicit `length`.** Without one Hibernate picks MySQL's
+22. **`@Lob` on a String needs an explicit `length`.** Without one Hibernate picks MySQL's
     smallest text tier — `TINYTEXT`, 255 bytes — and inserts fail with *"Data truncation:
     Data too long"*. Use `@Column(length = 1_000_000)` for `LONGTEXT`/`MEDIUMTEXT`. H2 does
     not reproduce this, so unit tests cannot catch it; `ddl-auto: update` will not widen an
     existing column either, so the table must be dropped or altered by hand.
-21. **MySQL's cold init takes ~85s on this machine**, so a `start_period` below that makes a
+23. **MySQL's cold init takes ~85s on this machine**, so a `start_period` below that makes a
     perfectly healthy container report `unhealthy` while it is merely initialising.
-22. **The Windows MySQL service owns port 3306**, so Compose cannot bind it. Host ports are
+24. **The Windows MySQL service owns port 3306**, so Compose cannot bind it. Host ports are
     overridable: `ORDER_DB_PORT=3316 docker compose up -d`.
-23. **Never let the Kafka producer stamp Java type headers.** Event classes are duplicated
+25. **Never let the Kafka producer stamp Java type headers.** Event classes are duplicated
    per service, so `spring.json.add.type.headers` must stay `false`. Left on, the producer
    writes `__TypeId__: com.demo.order_service.events.OrderPlacedEvent`, and the consumer —
    which only has `com.demo.inventory_service.events.OrderPlacedEvent` — fails to
    deserialize every single message. Consumers use `StringDeserializer` plus a
    `StringJsonMessageConverter` bean, which takes the target type from the
    `@KafkaListener` method parameter instead.
-24. **`*IT` classes do not run under `./mvnw test`.** Surefire only picks up `*Test`,
+26. **`*IT` classes do not run under `./mvnw test`.** Surefire only picks up `*Test`,
    `Test*`, `*Tests`, `*TestCase`. The integration tests are named `*IT` and run under
    **`./mvnw verify`** via failsafe. A green `test` run therefore proves *less* than it
    looks — check which plugin actually executed.
-25. **Tests must set `spring.kafka.admin.auto-create: false`.** Otherwise every
+27. **Tests must set `spring.kafka.admin.auto-create: false`.** Otherwise every
    `@SpringBootTest` spends ~45 s watching `KafkaAdmin` retry the `NewTopic` beans against
    a broker that is not running. It is not a failure, just a silent 10x slowdown.
-26. **Running Kafka on Windows without Docker:** the `bin/windows/*.bat` scripts die with
+28. **Running Kafka on Windows without Docker:** the `bin/windows/*.bat` scripts die with
     *"The input line is too long"* — the expanded classpath exceeds cmd's 8191-char limit
     under any deep path. Bypass them and let the JVM expand the wildcard itself:
     `java -cp "<kafka>/libs/*" kafka.Kafka <config>` (and `kafka.tools.StorageTool` to
     format KRaft storage first). Also avoid passing `-Dlog4j.configuration=` through
     PowerShell, which mangles it.
-27. **Spring Boot 4 moved the test-slice annotations.** They are no longer under
+29. **Spring Boot 4 moved the test-slice annotations.** They are no longer under
    `org.springframework.boot.test.autoconfigure.*`:
    - `@DataJpaTest` → `org.springframework.boot.data.jpa.test.autoconfigure`
    - `@WebMvcTest` → `org.springframework.boot.webmvc.test.autoconfigure`
 
    Every tutorial online still shows the Boot 3 packages, so the import will look right and
    fail to resolve. `@MockitoBean` (not `@MockBean`) is likewise the current spelling.
-28. **DB passwords are `${MYSQL_PASSWORD:root}` placeholders — keep them that way.**
+30. **DB passwords are `${MYSQL_PASSWORD:root}` placeholders — keep them that way.**
    `config-repo/order-service.yaml` and `inventory-service.yaml` previously carried
    `password: "root"` in plaintext. Fixed 2026-08-25, and `config-repo`'s history was
    squashed to one commit before its first push, so the literal credential never reached
    GitHub at all. The `:root` default means local runs still need no env var. **Do not
    reintroduce a literal password** — `config-repo` is public, and history is forever once
    pushed. Phase 14 replaces the default with Secret Manager.
-29. **`java` on PATH is Java 8.** Use JDK 21: `JAVA_HOME=C:\Users\Karthik\.jdks\ms-21.0.12`.
+31. **`java` on PATH is Java 8.** Use JDK 21: `JAVA_HOME=C:\Users\Karthik\.jdks\ms-21.0.12`.
    `mvn` is not on PATH at all — use each module's `./mvnw`.
-30. **Both DBs share `localhost:3306`** when running against the host MySQL. Compose splits
+32. **Both DBs share `localhost:3306`** when running against the host MySQL. Compose splits
     them into genuinely separate instances (verified 2026-08-26). The design called for
     3306/3307. Fine locally;
    Compose and the GCP data VM will split the schemas properly. Be honest about this.
-31. **Eureka registration lags roughly 40 s after boot** (client replication interval). An
+33. **Eureka registration lags roughly 40 s after boot** (client replication interval). An
     empty `/eureka/apps` immediately after startup is normal, not a failure.
-32. Maven needs network on first run — don't pass `-o`.
-33. `.idea/` is intentionally untracked; `.run/` is intentionally tracked.
-34. **Part B toolchain is half-installed.** Docker Desktop 29.7.2 is present and working;
+34. Maven needs network on first run — don't pass `-o`.
+35. `.idea/` is intentionally untracked; `.run/` is intentionally tracked.
+36. **Part B toolchain is half-installed.** Docker Desktop 29.7.2 is present and working;
     `gcloud`, `kubectl`, `helm` and `terraform` are not. Phase 12 installs those.
     Note Docker's CLI is only on the **machine** PATH — a shell started before the install
     will not see it. Use the full path
@@ -494,6 +504,27 @@ A 200 with **empty** `propertySources` means the filename doesn't match
 ## 10. Change log
 
 Newest first. Add an entry for every meaningful change.
+
+### 2026-08-26 — Phase 10 complete: Testcontainers and CI
+- **MySQL Testcontainers tests in both database-backed services**, written specifically to
+  catch the class of bug that got through in Phase 8. `OutboxMySqlIT` asserts the
+  `outbox_event.payload` column type directly and round-trips an eight-line order whose
+  payload exceeds the old 255-byte limit; `InventoryMySqlIT` verifies the reservation unique
+  constraint and the `@Version` column exist in the schema MySQL actually generates.
+- `@ServiceConnection` wires the container into the context — no `@DynamicPropertySource`.
+- **Testcontainers 2.x renamed every module artifact.** `org.testcontainers:mysql` does not
+  exist at 2.0.5; it is `testcontainers-mysql`. Same for `testcontainers-junit-jupiter`.
+  Needs the `testcontainers-bom` imported too — the Boot parent sets the version property
+  but does not manage the artifacts.
+- **The container timed out at 390s until the data directory moved to tmpfs.** On-disk MySQL
+  init takes 85–235s here and Testcontainers connects during the entrypoint's temporary
+  server, giving "Communications link failure" — the same trap as the Phase 7 healthcheck.
+  With tmpfs the suite runs in ~26s.
+- GitHub Actions: 7-way matrix running `verify` per service (not `test`, which would skip
+  every `*IT`), plus an image-build job. Images are built, not pushed — no registry until
+  Phase 17.
+- **101 tests** across five modules: 51 order, 33 inventory, 6 notification, 6 gateway,
+  5 payment. 43 of them are integration tests.
 
 ### 2026-08-26 — Phase 9 complete: the whole platform runs from containers
 - **Seven multi-stage Dockerfiles.** JDK builder → JRE runtime, non-root uid 10001, layered

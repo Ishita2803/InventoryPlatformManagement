@@ -11,10 +11,10 @@
 >    both drain the same outbox row; it's harmless because consumers are idempotent, and
 >    `SKIP LOCKED` is the clean fix" reads as senior. Being caught not knowing reads as
 >    junior.
-> 3. Everything below is **true as of Phases 0–9**. Status is tracked in
+> 3. Everything below is **true as of Phases 0–10**. Status is tracked in
 >    [`plan.md`](../plan.md); implementation detail in [`Agent.md`](../Agent.md).
 
-**Last updated:** 2026-08-26, after Phase 9.
+**Last updated:** 2026-08-26, after Phase 10.
 
 ---
 
@@ -435,8 +435,8 @@ processed_event  (same shape as above)
 
 | Fact | Value |
 |---|---|
-| Tests | **94** — 48 order, 29 inventory, 6 notification, 6 gateway, 5 payment |
-| Test split | 63 unit/slice, 31 integration (embedded Kafka, real DBs, stub HTTP servers) |
+| Tests | **101** — 51 order, 33 inventory, 6 notification, 6 gateway, 5 payment |
+| Test split | 58 unit/slice, **43 integration** (embedded Kafka, real MySQL via Testcontainers, stub HTTP servers) |
 | Optimistic-lock retry | 4 attempts, exponential backoff with jitter |
 | Kafka consumer retry | 3 attempts, then DLT |
 | Payment call | read timeout 2s, 3 attempts, breaker opens at 50% over ≥5 calls |
@@ -495,6 +495,18 @@ not two.
 > the original topic. There's no automated replay tool, and I'd want one before this was
 > anything real.
 
+**"How do you decide what to test with a container versus in memory?"**
+> By asking what the fast test structurally cannot see. H2 is fine for logic and even for
+> optimistic locking, because that is Hibernate emitting `UPDATE ... WHERE version = ?` and
+> behaves identically. It is useless for anything database-specific — and I learned that the
+> hard way: `@Lob` on a String silently became `TINYTEXT` on MySQL, 255 bytes, and every
+> payload over that failed at insert. It survived three phases because the payloads happened
+> to fit, and no H2 test could ever have caught it.
+>
+> So the container tests are targeted, not duplicated: column types, the unique constraint
+> the idempotency guarantee depends on, the `@Version` column. Everything else stays on H2
+> and runs in milliseconds.
+
 **"Where does this break at 10× scale?"**
 > Three places. The `processed_event` tables grow unbounded — they need a retention job. The
 > single Kafka partition caps consumer parallelism. And the outbox poller in Phase 5 becomes a
@@ -549,7 +561,6 @@ not two.
 
 | Not built | Phase |
 |---|---|
-| Testcontainers, CI pipeline | 10 |
 | README, ADRs, OpenAPI, **any throughput benchmark** | 11 |
 | Everything GCP: GKE, Secret Manager, deployment | 12–18 |
 
@@ -612,7 +623,11 @@ Frame as problems solved, not technologies used.
 > images and layered jars for fast rebuilds; `docker compose up` brings all ten containers up
 > in dependency order using healthchecks rather than sleeps.
 
-**Do not yet write:** Kubernetes, GCP, CI/CD.
+> **Caught a class of bug the fast tests structurally could not see** by adding
+> Testcontainers integration tests on the same MySQL image the platform runs on — after an
+> H2-invisible column-type defect reached three phases before surfacing.
+
+**Do not yet write:** Kubernetes, GCP, deployment automation.
 
 ---
 

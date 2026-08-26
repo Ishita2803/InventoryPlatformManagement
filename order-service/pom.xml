@@ -77,6 +77,30 @@
 		</dependency>
 
 		<!-- In-memory database for tests; see inventory-service for the rationale. -->
+		<!--
+		  Testcontainers: the same MySQL image the platform actually runs on, started per
+		  test class. H2 is fast and portable but it is NOT MySQL, and the difference is
+		  where real bugs hide: the outbox payload column silently became TINYTEXT and no
+		  H2 test could ever have noticed. These tests exist to catch that class of defect.
+		-->
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-testcontainers</artifactId>
+			<scope>test</scope>
+		</dependency>
+		<dependency>
+			<groupId>org.testcontainers</groupId>
+			<!-- Testcontainers 2.x renamed every module with a testcontainers- prefix.
+			     The 1.x coordinates (org.testcontainers:mysql) do not exist at 2.0.5, and
+			     every tutorial online still uses them. -->
+			<artifactId>testcontainers-mysql</artifactId>
+			<scope>test</scope>
+		</dependency>
+		<dependency>
+			<groupId>org.testcontainers</groupId>
+			<artifactId>testcontainers-junit-jupiter</artifactId>
+			<scope>test</scope>
+		</dependency>
 		<dependency>
 			<groupId>com.h2database</groupId>
 			<artifactId>h2</artifactId>
@@ -115,6 +139,13 @@
 	</dependencies>
 	<dependencyManagement>
 		<dependencies>
+			<dependency>
+				<groupId>org.testcontainers</groupId>
+				<artifactId>testcontainers-bom</artifactId>
+				<version>${testcontainers.version}</version>
+				<type>pom</type>
+				<scope>import</scope>
+			</dependency>
 			<dependency>
 				<groupId>org.springframework.cloud</groupId>
 				<artifactId>spring-cloud-dependencies</artifactId>

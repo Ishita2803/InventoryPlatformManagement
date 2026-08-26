@@ -405,12 +405,37 @@ the volume must be deleted. And after recreating a service, the gateway's first 
 404 until its Eureka registry cache refreshes; that is registry propagation, not a routing
 bug.
 
-## Phase 10 — Testing and CI
+## Phase 10 — Testing and CI ✅ *(done 2026-08-26)*
 
-- [ ] Testcontainers integration tests (MySQL + Kafka), including the outbox path
-- [ ] GitHub Actions: compile → unit → integration → jar → image build
+- [x] Testcontainers integration tests against **real MySQL 8.0** — the same image the
+      platform runs on — in both database-backed services
+- [x] GitHub Actions: a 7-way matrix running `verify` per service, then a job that builds
+      every container image and boots the backing services
 
-**Exit:** a green CI run on a pull request, with images built but not yet pushed anywhere.
+**These tests exist because of a specific bug.** Phase 8's `TINYTEXT` defect was invisible to
+100% of the H2 suite, because H2 does not reproduce MySQL's type mapping. `OutboxMySqlIT` now
+asserts directly that `outbox_event.payload` is a real text type and that an eight-line
+order — payload well over 255 bytes — round-trips intact. `InventoryMySqlIT` does the same
+for the things inventory's correctness rests on: the unique constraint that *is* the
+idempotency guarantee, and the `@Version` column that prevents overselling.
+
+**`@ServiceConnection`** wires the container's JDBC URL into the context, so there is no
+`@DynamicPropertySource` plumbing and no way for the test to point at the wrong database.
+
+**Two traps worth knowing.** Testcontainers **2.x renamed every module** —
+`org.testcontainers:mysql` no longer exists, it is `testcontainers-mysql`, and every tutorial
+online still shows the old coordinates. And the MySQL container timed out after 390s until
+the data directory was moved to **tmpfs**: on-disk init takes 85–235s here and Testcontainers
+kept connecting during the entrypoint's temporary server — the same trap the Compose
+healthcheck hit in Phase 7. With tmpfs the suite runs in ~26s.
+
+**CI notes.** The workflow runs `verify`, not `test`: `test` alone silently skips every `*IT`
+in this project and the build would go green while proving far less than it looks. Images are
+built but **not pushed** — there is no registry until Phase 17.
+
+**Exit:** met. All five modules green — **101 tests** (51 order, 33 inventory, 6 notification,
+6 gateway, 5 payment), of which 43 are integration tests against a real broker, real MySQL,
+or a real HTTP server.
 
 ## Phase 11 — Documentation
 

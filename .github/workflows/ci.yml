@@ -1,0 +1,97 @@
+name: CI
+
+# Every push and every pull request. There is no "run it manually before merging" step,
+# because a check people have to remember is a check that does not happen.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# A new push to the same branch cancels the run already in flight. Without this, a busy
+# branch queues runs that are obsolete before they finish.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: build · ${{ matrix.service }}
+    runs-on: ubuntu-latest
+
+    strategy:
+      # Do not stop the other six because one failed. Seeing every failure in one run beats
+      # fixing them one push at a time.
+      fail-fast: false
+      matrix:
+        service:
+          - discovery-service
+          - config-service
+          - api-gateway-service
+          - order-service
+          - inventory-service
+          - notification-service
+          - payment-service
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # config-repo is a submodule. Without this the checkout leaves it empty; that does
+          # not break the build (Config Server reads the remote) but it would break anything
+          # that expects the YAML on disk.
+          submodules: recursive
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          # Caches ~/.m2 keyed on the pom files.
+          cache: maven
+
+      # `verify` runs BOTH surefire (unit) and failsafe (*IT) phases. `test` alone would
+      # silently skip every integration test in this project, and the build would go green
+      # while proving considerably less than it appears to.
+      #
+      # Testcontainers works here without setup: ubuntu-latest runners have a Docker daemon.
+      - name: Build and test
+        run: cd ${{ matrix.service }} && ./mvnw -B --no-transfer-progress verify
+
+      - name: Publish test report
+        # Runs even when the build failed -- that is precisely when the report matters.
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-${{ matrix.service }}
+          path: |
+            ${{ matrix.service }}/target/surefire-reports/
+            ${{ matrix.service }}/target/failsafe-reports/
+          retention-days: 7
+
+  images:
+    name: build container images
+    runs-on: ubuntu-latest
+    # Only worth building images once the code is known good.
+    needs: build
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: docker/setup-buildx-action@v3
+
+      # Built but NOT pushed. There is no registry yet -- pushing starts in Phase 17, once
+      # Artifact Registry exists and Workload Identity Federation is set up. Building here
+      # still catches a broken Dockerfile before it reaches a deployment.
+      - name: Build all service images
+        run: docker compose build
+
+      - name: Verify the images are runnable
+        run: |
+          docker compose up -d kafka order-mysql inventory-mysql
+          echo "Waiting for backing services..."
+          timeout 420 bash -c 'until [ "$(docker compose ps --format "{{.Health}}" | grep -c healthy)" -eq 3 ]; do sleep 5; done'
+          docker compose ps
+          docker compose down -v
