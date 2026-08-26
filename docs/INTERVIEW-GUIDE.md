@@ -11,10 +11,10 @@
 >    both drain the same outbox row; it's harmless because consumers are idempotent, and
 >    `SKIP LOCKED` is the clean fix" reads as senior. Being caught not knowing reads as
 >    junior.
-> 3. Everything below is **true as of Phases 0–8**. Status is tracked in
+> 3. Everything below is **true as of Phases 0–9**. Status is tracked in
 >    [`plan.md`](../plan.md); implementation detail in [`Agent.md`](../Agent.md).
 
-**Last updated:** 2026-08-26, after Phase 8.
+**Last updated:** 2026-08-26, after Phase 9.
 
 ---
 
@@ -444,7 +444,8 @@ processed_event  (same shape as above)
 | Verified E2E (happy) | qty 3 vs stock 10 → `INVENTORY_RESERVED`, stock 7/3, `version=1` |
 | Verified E2E (failure) | qty 999 → `INVENTORY_FAILED`, **no** reservation row, stock untouched |
 | Mutation check | `@Version` removed → 10 threads "succeed", only 2 units deducted |
-| Stack | Java 21, Spring Boot 4.1, Spring Cloud 2025.1.2, Kafka KRaft, MySQL 8 |
+| Stack | Java 21, Spring Boot 4.1, Spring Cloud 2025.1.2, Kafka KRaft, MySQL 8, Docker |
+| Containers | 10 (7 services + Kafka + 2 MySQL); images 538–655 MB; cold build 8.3 min |
 
 **`version=1` is worth quoting** — it proves exactly one optimistic-locked update happened,
 not two.
@@ -520,6 +521,23 @@ not two.
 > *Be honest about the limit:* the downstream services receive it but don't yet log it, so
 > today the trail stops at the gateway. Micrometer Tracing in Phase 9 closes that.
 
+**"Walk me through your Dockerfile."**
+> Multi-stage. A JDK builds, a JRE runs — the runtime image has no compiler, no Maven, no
+> source, which is smaller and removes tooling from the attack surface of the thing exposed
+> to traffic. Non-root user. The pom is copied on its own layer before the source, so a code
+> change does not re-resolve dependencies, and the fat jar is split into layers so
+> dependencies and application code cache independently.
+>
+> *The detail worth adding:* `-XX:MaxRAMPercentage` is useless without a container memory
+> limit — the JVM sees the whole host and the flag bounds nothing. I set both, and verified
+> a 768 MB container yields a 576 MB heap.
+
+**"Why does your Kafka have two listeners?"**
+> Because a client connects to a bootstrap address and is then handed back the *advertised*
+> address to reconnect to. Containers need `kafka:9092`, which is meaningless on the host;
+> host processes need `localhost:29092`, which is meaningless inside the network. One
+> advertised address cannot serve both audiences, so there are two listeners on one broker.
+
 **"What would you do differently?"**
 > Build the outbox before the plain publish rather than after — I knowingly shipped a
 > dual-write window I then had to document. And I'd verify the Docker Compose file earlier
@@ -531,7 +549,6 @@ not two.
 
 | Not built | Phase |
 |---|---|
-| Dockerfiles per service (the Compose file for Kafka + MySQL **is** verified working) | 9 |
 | Testcontainers, CI pipeline | 10 |
 | README, ADRs, OpenAPI, **any throughput benchmark** | 11 |
 | Everything GCP: GKE, Secret Manager, deployment | 12–18 |
@@ -591,7 +608,11 @@ Frame as problems solved, not technologies used.
 > inventory is never leaked; demonstrated by killing the payment service and observing the
 > breaker open, the fallback fire, and stock return.
 
-**Do not yet write:** Docker, Kubernetes, GCP, CI/CD.
+> **Containerised the platform** with multi-stage builds producing JRE-only, non-root
+> images and layered jars for fast rebuilds; `docker compose up` brings all ten containers up
+> in dependency order using healthchecks rather than sleeps.
+
+**Do not yet write:** Kubernetes, GCP, CI/CD.
 
 ---
 

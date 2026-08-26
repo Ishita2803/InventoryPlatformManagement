@@ -1,50 +1,53 @@
-# Backing infrastructure for local development: Kafka plus the two MySQL schemas.
+# The whole platform: Kafka, two MySQL instances, and all seven services.
 #
-# Scope: this file runs the STATEFUL dependencies only, not the Spring services. Those are
-# still run from the IDE or `./mvnw spring-boot:run`, which keeps the edit/restart loop fast.
-# Phase 9 adds Dockerfiles and a compose profile that runs the services too.
+#   docker compose up -d --build         # everything, from images
+#   docker compose down                  # keeps volumes
+#   docker compose down -v               # destroys the data too
 #
-# This is also the file Phase 13 lifts onto the GCP data VM more or less unchanged, which is
-# why the two things it will need there — an externally reachable advertised listener, and
-# heap limits sized for a 4 GB box — are already parameterised rather than hardcoded.
+# For the fast edit/restart loop, start only the backing services and run the Spring
+# applications from the IDE against them:
 #
-#   docker compose up -d
-#   docker compose down          # keeps volumes
-#   docker compose down -v       # destroys the data too
+#   docker compose up -d kafka order-mysql inventory-mysql
 #
-# Host ports are overridable (KAFKA_PORT, ORDER_DB_PORT, INVENTORY_DB_PORT) so this can run
-# alongside a MySQL already bound to 3306 on the host — a Windows MySQL service will be.
-#
-# VERIFIED 2026-08-26 on Docker 29.7.2: all three containers reach healthy in ~50s, both
-# schemas are created in genuinely separate instances, Kafka round-trips a message, and the
-# full order flow runs against this stack end to end.
+# Host ports are overridable (KAFKA_HOST_PORT, ORDER_DB_PORT, INVENTORY_DB_PORT) so this can
+# run alongside a MySQL already bound to 3306 -- a Windows MySQL service will be.
 
 services:
+
+  # =======================================================================================
+  # Backing services
+  # =======================================================================================
 
   kafka:
     image: apache/kafka:3.9.0
     container_name: kafka
     ports:
-      # Host port is overridable so this can run alongside anything already bound.
-      - "${KAFKA_PORT:-9092}:9092"
+      # Only the host listener is published. In-container clients use kafka:9092 over the
+      # compose network and need no published port at all.
+      - "${KAFKA_HOST_PORT:-29092}:29092"
     environment:
-      # KRaft: no ZooKeeper. A single node is both broker and controller.
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller
       KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
-      # Bind to all interfaces by omitting the host, NOT by writing 0.0.0.0. When
-      # advertised.listeners is unset Kafka derives it from listeners, and it then refuses
-      # to start: "advertised.listeners cannot use the nonroutable meta-address 0.0.0.0".
-      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT
+
+      # TWO listeners, and this is the part that trips people up. A client connects to a
+      # bootstrap address, is handed back the ADVERTISED address, and reconnects to that.
+      # So one advertised address cannot serve both audiences: containers must be told
+      # "kafka:9092" (meaningless on the host) and host processes must be told
+      # "localhost:29092" (meaningless inside the network). Two listeners, two advertised
+      # addresses, one broker.
+      #
+      # Bind with no host, never 0.0.0.0 -- the broker refuses to start with the
+      # nonroutable meta-address.
+      KAFKA_LISTENERS: PLAINTEXT://:9092,PLAINTEXT_HOST://:29092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:${KAFKA_HOST_PORT:-29092}
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT,CONTROLLER:PLAINTEXT
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
 
-      # The address handed BACK to clients after they connect. A client connects to
-      # whatever is here, so if this says "localhost" and the client is not on this host,
-      # the connection succeeds and every subsequent produce/fetch fails with a timeout
-      # that looks like a network fault. On the GCP VM this becomes the VM's internal IP.
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://${KAFKA_ADVERTISED_HOST:-localhost}:9092
+      # Without this the broker writes to /tmp and the named volume below holds nothing --
+      # persistence that silently is not persistence, only discovered on recreation.
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
 
       # Single broker, so nothing can be replicated more than once. Left at the default of
       # 3, the first consumer group would fail to create its offsets topic.
@@ -53,11 +56,6 @@ services:
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
 
-      # Without this the broker writes to /tmp/kraft-combined-logs and the named volume
-      # below holds nothing -- the data looks persisted and silently is not.
-      KAFKA_LOG_DIRS: /var/lib/kafka/data
-
-      # Sized for a shared 4 GB VM rather than a dedicated machine.
       KAFKA_HEAP_OPTS: ${KAFKA_HEAP_OPTS:--Xms512m -Xmx768m}
     volumes:
       - kafka-data:/var/lib/kafka/data
@@ -72,41 +70,31 @@ services:
     image: mysql:8.0
     container_name: order-mysql
     ports:
-      # Override ORDER_DB_PORT if a MySQL service is already bound to 3306 on the host --
-      # a Windows MySQL install will be, and the bind failure is not obvious from the error.
       - "${ORDER_DB_PORT:-3306}:3306"
     environment:
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root}
       MYSQL_DATABASE: order_db
     command:
-      # The default buffer pool assumes the box is yours alone. Two MySQLs and a Kafka on
-      # one 4 GB VM is the situation Phase 13 puts them in.
       - --innodb-buffer-pool-size=${MYSQL_BUFFER_POOL:-384M}
     volumes:
       - order-mysql-data:/var/lib/mysql
     healthcheck:
       # --protocol=TCP is essential, not tidiness. "-h localhost" connects over the unix
-      # SOCKET, and the entrypoint's data-directory init runs a temporary server that
-      # listens on the socket with "port: 0" -- no TCP listener at all. The socket check
-      # therefore passes, Docker reports the container healthy, and then MySQL shuts that
-      # temporary server down and starts the real one. A client connecting in that window
-      # gets "Communications link failure". Checking the port clients actually use means
-      # healthy means reachable.
+      # SOCKET, and the entrypoint init runs a temporary server listening on the socket with
+      # "port: 0" -- no TCP listener. The socket check passes, Docker reports healthy, then
+      # MySQL restarts the real server; a client connecting in that window gets
+      # "Communications link failure". Checking the port clients use means healthy means
+      # reachable -- which the depends_on below relies on.
       test: ["CMD", "mysqladmin", "ping", "--protocol=TCP", "-h", "127.0.0.1", "-P", "3306", "-uroot", "-p${MYSQL_ROOT_PASSWORD:-root}"]
       interval: 10s
       timeout: 5s
       retries: 10
-      # A cold first run initialises the data directory: measured ~85s on an idle machine
-      # and over 235s on a busy one, where it was still loading timezone tables. Too short
-      # a start_period reports a perfectly healthy container as unhealthy while it is merely
-      # starting -- harmless on its own (it self-corrects) but fatal to a
-      # `depends_on: condition: service_healthy`, which Phase 9 will use.
+      # Cold init measured ~85s idle and over 235s on a busy machine.
       start_period: 300s
 
-  # A genuinely separate instance, not a second schema on the first. Two services sharing
-  # one database is the thing microservices are supposed to avoid, and running them apart
-  # locally means nobody can accidentally write a cross-schema join that works in dev and
-  # is impossible in production.
+  # A genuinely separate instance, not a second schema on the first. Two services sharing one
+  # database is what microservices exist to avoid, and running them apart means nobody can
+  # write a cross-schema join that works in dev and is impossible in production.
   inventory-mysql:
     image: mysql:8.0
     container_name: inventory-mysql
@@ -121,22 +109,210 @@ services:
       - inventory-mysql-data:/var/lib/mysql
     healthcheck:
       # --protocol=TCP is essential, not tidiness. "-h localhost" connects over the unix
-      # SOCKET, and the entrypoint's data-directory init runs a temporary server that
-      # listens on the socket with "port: 0" -- no TCP listener at all. The socket check
-      # therefore passes, Docker reports the container healthy, and then MySQL shuts that
-      # temporary server down and starts the real one. A client connecting in that window
-      # gets "Communications link failure". Checking the port clients actually use means
-      # healthy means reachable.
+      # SOCKET, and the entrypoint init runs a temporary server listening on the socket with
+      # "port: 0" -- no TCP listener. The socket check passes, Docker reports healthy, then
+      # MySQL restarts the real server; a client connecting in that window gets
+      # "Communications link failure". Checking the port clients use means healthy means
+      # reachable -- which the depends_on below relies on.
       test: ["CMD", "mysqladmin", "ping", "--protocol=TCP", "-h", "127.0.0.1", "-P", "3306", "-uroot", "-p${MYSQL_ROOT_PASSWORD:-root}"]
       interval: 10s
       timeout: 5s
       retries: 10
-      # A cold first run initialises the data directory: measured ~85s on an idle machine
-      # and over 235s on a busy one, where it was still loading timezone tables. Too short
-      # a start_period reports a perfectly healthy container as unhealthy while it is merely
-      # starting -- harmless on its own (it self-corrects) but fatal to a
-      # `depends_on: condition: service_healthy`, which Phase 9 will use.
+      # Cold init measured ~85s idle and over 235s on a busy machine.
       start_period: 300s
+
+  # =======================================================================================
+  # Platform services
+  #
+  # Order is expressed with depends_on + service_healthy, not sleeps. The config clients use
+  # a NON-OPTIONAL spring.config.import, so a client starting before Config Server does not
+  # retry -- it fails loudly and exits. That is deliberate, and it is why this graph has to
+  # be right.
+  # =======================================================================================
+
+  discovery-service:
+    build: ./discovery-service
+    image: order-platform/discovery-service:latest
+    # A real limit, so -XX:MaxRAMPercentage in the Dockerfile actually bounds something.
+    # Without it the JVM sees the whole host and the flag is decoration. This also
+    # mirrors the constrained nodes Phase 15 runs on.
+    mem_limit: 512m
+    container_name: discovery-service
+    ports:
+      - "8761:8761"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8761/actuator/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 60s
+
+  config-service:
+    # Reads the config repo from GitHub, so it needs no volume and behaves
+    # identically here and in GKE.
+    build: ./config-service
+    image: order-platform/config-service:latest
+    # A real limit, so -XX:MaxRAMPercentage in the Dockerfile actually bounds something.
+    # Without it the JVM sees the whole host and the flag is decoration. This also
+    # mirrors the constrained nodes Phase 15 runs on.
+    mem_limit: 512m
+    container_name: config-service
+    ports:
+      - "8888:8888"
+    environment:
+      CONFIG_REPO_URI: ${CONFIG_REPO_URI:-https://github.com/Ishita2803/order-platform-config-repo.git}
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8888/actuator/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 60s
+
+  order-service:
+    build: ./order-service
+    image: order-platform/order-service:latest
+    # A real limit, so -XX:MaxRAMPercentage in the Dockerfile actually bounds something.
+    # Without it the JVM sees the whole host and the flag is decoration. This also
+    # mirrors the constrained nodes Phase 15 runs on.
+    mem_limit: 768m
+    container_name: order-service
+    ports:
+      - "8081:8081"
+    environment:
+      CONFIG_SERVER_URL: http://config-service:8888
+      EUREKA_SERVICE_URL: http://discovery-service:8761/eureka/
+      # Register the container IP, not the hostname. Docker sets a container's hostname to
+      # its ID, which the embedded DNS does not resolve -- so lb:// lookups through Eureka
+      # would return an address nothing can reach.
+      EUREKA_INSTANCE_PREFER_IP_ADDRESS: "true"
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      ORDER_DB_URL: jdbc:mysql://order-mysql:3306/order_db
+      PAYMENT_BASE_URL: http://payment-service:8084
+    depends_on:
+      config-service: { condition: service_healthy }
+      discovery-service: { condition: service_healthy }
+      order-mysql: { condition: service_healthy }
+      kafka: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8081/actuator/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 60s
+
+  inventory-service:
+    build: ./inventory-service
+    image: order-platform/inventory-service:latest
+    # A real limit, so -XX:MaxRAMPercentage in the Dockerfile actually bounds something.
+    # Without it the JVM sees the whole host and the flag is decoration. This also
+    # mirrors the constrained nodes Phase 15 runs on.
+    mem_limit: 768m
+    container_name: inventory-service
+    ports:
+      - "8082:8082"
+    environment:
+      CONFIG_SERVER_URL: http://config-service:8888
+      EUREKA_SERVICE_URL: http://discovery-service:8761/eureka/
+      # Register the container IP, not the hostname. Docker sets a container's hostname to
+      # its ID, which the embedded DNS does not resolve -- so lb:// lookups through Eureka
+      # would return an address nothing can reach.
+      EUREKA_INSTANCE_PREFER_IP_ADDRESS: "true"
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      INVENTORY_DB_URL: jdbc:mysql://inventory-mysql:3306/inventory_db
+    depends_on:
+      config-service: { condition: service_healthy }
+      discovery-service: { condition: service_healthy }
+      inventory-mysql: { condition: service_healthy }
+      kafka: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8082/actuator/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 60s
+
+  notification-service:
+    build: ./notification-service
+    image: order-platform/notification-service:latest
+    # A real limit, so -XX:MaxRAMPercentage in the Dockerfile actually bounds something.
+    # Without it the JVM sees the whole host and the flag is decoration. This also
+    # mirrors the constrained nodes Phase 15 runs on.
+    mem_limit: 512m
+    container_name: notification-service
+    ports:
+      - "8083:8083"
+    environment:
+      CONFIG_SERVER_URL: http://config-service:8888
+      EUREKA_SERVICE_URL: http://discovery-service:8761/eureka/
+      # Register the container IP, not the hostname. Docker sets a container's hostname to
+      # its ID, which the embedded DNS does not resolve -- so lb:// lookups through Eureka
+      # would return an address nothing can reach.
+      EUREKA_INSTANCE_PREFER_IP_ADDRESS: "true"
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+    depends_on:
+      config-service: { condition: service_healthy }
+      discovery-service: { condition: service_healthy }
+      kafka: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8083/actuator/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 60s
+
+  payment-service:
+    build: ./payment-service
+    image: order-platform/payment-service:latest
+    # A real limit, so -XX:MaxRAMPercentage in the Dockerfile actually bounds something.
+    # Without it the JVM sees the whole host and the flag is decoration. This also
+    # mirrors the constrained nodes Phase 15 runs on.
+    mem_limit: 512m
+    container_name: payment-service
+    ports:
+      - "8084:8084"
+    environment:
+      CONFIG_SERVER_URL: http://config-service:8888
+      EUREKA_SERVICE_URL: http://discovery-service:8761/eureka/
+      # Register the container IP, not the hostname. Docker sets a container's hostname to
+      # its ID, which the embedded DNS does not resolve -- so lb:// lookups through Eureka
+      # would return an address nothing can reach.
+      EUREKA_INSTANCE_PREFER_IP_ADDRESS: "true"
+    depends_on:
+      config-service: { condition: service_healthy }
+      discovery-service: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8084/actuator/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 60s
+
+  api-gateway-service:
+    build: ./api-gateway-service
+    image: order-platform/api-gateway-service:latest
+    # A real limit, so -XX:MaxRAMPercentage in the Dockerfile actually bounds something.
+    # Without it the JVM sees the whole host and the flag is decoration. This also
+    # mirrors the constrained nodes Phase 15 runs on.
+    mem_limit: 512m
+    container_name: api-gateway-service
+    ports:
+      - "8080:8080"
+    environment:
+      CONFIG_SERVER_URL: http://config-service:8888
+      EUREKA_SERVICE_URL: http://discovery-service:8761/eureka/
+      # Register the container IP, not the hostname. Docker sets a container's hostname to
+      # its ID, which the embedded DNS does not resolve -- so lb:// lookups through Eureka
+      # would return an address nothing can reach.
+      EUREKA_INSTANCE_PREFER_IP_ADDRESS: "true"
+    depends_on:
+      config-service: { condition: service_healthy }
+      discovery-service: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/actuator/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 60s
 
 volumes:
   kafka-data:

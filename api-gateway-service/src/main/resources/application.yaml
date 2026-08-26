@@ -6,4 +6,4 @@ spring:
   # via Config Server. Non-optional on purpose: a missing Config Server should be a
   # loud startup failure, not a silent fallback to stale local defaults.
   config:
-    import: configserver:http://localhost:8888
+    import: configserver:${CONFIG_SERVER_URL:http://localhost:8888}

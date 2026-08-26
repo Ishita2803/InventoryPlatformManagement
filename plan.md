@@ -365,23 +365,45 @@ so resuming would be safe — what is missing is the thing that resumes it. **A 
 job over orders sitting in `INVENTORY_RESERVED` past a threshold is now a required item, not
 a nice-to-have.**
 
-## Phase 9 — Containerise everything
+## Phase 9 — Containerise everything ✅ *(done 2026-08-26)*
 
-This phase is the bridge to Part B. Get it right and Part B is plumbing.
+- [x] Multi-stage `Dockerfile` per service (7): JDK 21 builder → **JRE 21** runtime,
+      non-root user (uid 10001), layered jar extraction
+- [x] `-XX:MaxRAMPercentage=75` **plus real `mem_limit`s**, because the flag bounds nothing
+      without a limit — verified: 768m container → 576 MB heap, 512m → 384 MB
+- [x] Every hard-coded `localhost` replaced by an env var with a localhost default. The last
+      ones were `spring.config.import`, now `configserver:${CONFIG_SERVER_URL:...}`
+- [x] `docker compose up` brings the **entire platform** up from images — 10 containers
+- [x] Actuator health wired into Compose healthchecks, with `depends_on: service_healthy`
+      expressing startup order instead of sleeps
+- [x] `.dockerignore` per service
 
-- [ ] Multi-stage `Dockerfile` per service (JDK 21 build layer → JRE 21 runtime layer),
-      non-root user, layered jar extraction for fast rebuilds
-- [ ] `-XX:MaxRAMPercentage` set explicitly — the GKE nodes will be small and the JVM's
-      default heap sizing will not fit them
-- [ ] Every `localhost` hard-coding replaced by an env var with a localhost default
-      (Config Server URL, Eureka URL, JDBC URL, Kafka bootstrap servers). **Nothing in
-      Part B works until this is done.**
-- [ ] `docker compose up` brings the entire platform up from images alone
-- [ ] Actuator health and readiness wired into Compose healthchecks
-- [ ] `.dockerignore` per service
+**Image sizes:** 538–655 MB. Layer ordering is deliberate — dependencies copied before
+application code, so a source-only change rebuilds just the top layer. A BuildKit cache mount
+shares one Maven repository across all seven builds, so Spring Boot is resolved once rather
+than seven times. Full cold build: **8.3 minutes**.
 
-**Exit:** `docker compose up` on a machine with no JDK installed runs the full happy path
-and the full failure path.
+**Kafka needs two listeners, and this is the subtle part.** A client connects to a bootstrap
+address, is handed back the *advertised* address, and reconnects to that. One advertised
+address therefore cannot serve both audiences: containers must be told `kafka:9092`
+(meaningless on the host) and host processes `localhost:29092` (meaningless in the network).
+Two listeners, two advertised addresses, one broker. **The host port moved 9092 → 29092.**
+
+**Also added:** `.env.example` (committed) plus a gitignored `.env`, because a Windows MySQL
+service owns 3306 and the resulting bind failure — *"Only one usage of each socket address"* —
+does not obviously point at MySQL.
+
+**Exit:** met. `docker compose up` runs the full happy path (order → `CONFIRMED`, stock
+shipped) and both failure paths (out of stock → `INVENTORY_FAILED`; payment declined →
+`CANCELLED` with stock released) entirely from images, through the gateway, with no JDK
+involved at runtime — `javac` is absent from the runtime images and every service runs as
+`appuser`.
+
+**Two things worth knowing for next time.** A container killed mid-initialisation leaves MySQL
+with a corrupt data directory (*"Cannot create redo log files"*) that no restart recovers —
+the volume must be deleted. And after recreating a service, the gateway's first request can
+404 until its Eureka registry cache refreshes; that is registry propagation, not a routing
+bug.
 
 ## Phase 10 — Testing and CI
 

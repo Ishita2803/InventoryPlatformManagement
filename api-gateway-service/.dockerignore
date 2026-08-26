@@ -1,0 +1,13 @@
+# Everything the build does not need. Keeping the context small speeds every build and,
+# more importantly, stops local state (a built target/, IDE files, .git history) from
+# leaking into an image.
+target/
+!.mvn/wrapper/maven-wrapper.jar
+.git
+.gitignore
+.gitattributes
+.idea
+*.iml
+HELP.md
+Dockerfile
+.dockerignore

@@ -75,7 +75,7 @@ not feature count or delivery speed. Concretely:
 | Resilience | Resilience4j — timeout, retry, circuit breaker, fallback on the payment call |
 | Build | Maven (wrapper per module; there is **no parent aggregator pom**) |
 | Boilerplate | Lombok |
-| Container | Docker Desktop 29.7.2. `docker-compose.yml` **verified working**; per-service Dockerfiles still to come (Phase 9) |
+| Container | Docker Desktop 29.7.2. **Seven multi-stage Dockerfiles**; `docker compose up` runs the whole platform |
 | Orchestration | GKE Standard, zonal, Spot nodes *(not yet created)* |
 | Secrets | GCP Secret Manager via CSI driver *(not yet created)* |
 
@@ -99,7 +99,7 @@ aggregator pom, so "build everything" means looping over modules.
 | `notification-service` | 8083 | Consumes both result topics, mock email. **No database** | yes | yes |
 | `payment-service` | 8084 | Mocked, synchronous, idempotent by orderId. **No database** | yes | yes |
 | MySQL | 3306 | **both** schemas on one instance | — | on the data VM |
-| Kafka | 9092 | `order.placed`, `inventory.reserved`, `inventory.failed`, `order.confirmed`, `order.cancelled` | — | on the data VM |
+| Kafka | 9092 in-network / **29092 on the host** | `order.placed`, `inventory.reserved`, `inventory.failed`, `order.confirmed`, `order.cancelled` | — | on the data VM |
 
 Note `discovery-service`'s application name is `discovery-server`, which does **not** match
 its directory name. That is deliberate but easy to trip over.
@@ -385,65 +385,79 @@ Ordered roughly by how much time each one costs when forgotten.
 13. **Gateway properties are `spring.cloud.gateway.server.webmvc.*`.** This project uses the
     MVC/Servlet gateway. Every tutorial using `spring.cloud.gateway.routes` is for the
     reactive one, and configuring that here fails silently — no routes, no error.
-14. **Put a Resilience4j `fallbackMethod` on the OUTERMOST annotation.** The aspects nest
+14. **Kafka in Compose needs TWO listeners.** A client reconnects to the *advertised*
+    address, so containers need `kafka:9092` and host processes need `localhost:29092`. One
+    advertised address cannot serve both. **The host port is 29092, not 9092.**
+15. **`extract --layers --launcher` produces no jar.** The entrypoint is
+    `java org.springframework.boot.loader.launch.JarLauncher` from the extracted directory,
+    not `java -jar app.jar`.
+16. **`MaxRAMPercentage` does nothing without a container memory limit.** The JVM otherwise
+    sees the whole host. Note `free` inside a container still reports host RAM; the JVM
+    reads the cgroup limit, so trust `-XX:+PrintFlagsFinal`, not `free`.
+17. **A MySQL container killed mid-init leaves a corrupt data directory.** *"Cannot create
+    redo log files because data files are corrupt"* — no restart recovers it, the volume
+    must be deleted.
+18. **After recreating a service, the gateway can 404 briefly** until its Eureka registry
+    cache refreshes. Registry propagation, not a routing bug.
+19. **Put a Resilience4j `fallbackMethod` on the OUTERMOST annotation.** The aspects nest
     as `Retry(CircuitBreaker(call))`, so a fallback on `@CircuitBreaker` fires on the first
     failure and returns normally — Retry then sees a success and never retries. The retry is
     silently dead while the configuration still looks correct. Only a test that counts
     requests arriving at the server catches this.
-15. **`@Lob` on a String needs an explicit `length`.** Without one Hibernate picks MySQL's
+20. **`@Lob` on a String needs an explicit `length`.** Without one Hibernate picks MySQL's
     smallest text tier — `TINYTEXT`, 255 bytes — and inserts fail with *"Data truncation:
     Data too long"*. Use `@Column(length = 1_000_000)` for `LONGTEXT`/`MEDIUMTEXT`. H2 does
     not reproduce this, so unit tests cannot catch it; `ddl-auto: update` will not widen an
     existing column either, so the table must be dropped or altered by hand.
-16. **MySQL's cold init takes ~85s on this machine**, so a `start_period` below that makes a
+21. **MySQL's cold init takes ~85s on this machine**, so a `start_period` below that makes a
     perfectly healthy container report `unhealthy` while it is merely initialising.
-17. **The Windows MySQL service owns port 3306**, so Compose cannot bind it. Host ports are
+22. **The Windows MySQL service owns port 3306**, so Compose cannot bind it. Host ports are
     overridable: `ORDER_DB_PORT=3316 docker compose up -d`.
-18. **Never let the Kafka producer stamp Java type headers.** Event classes are duplicated
+23. **Never let the Kafka producer stamp Java type headers.** Event classes are duplicated
    per service, so `spring.json.add.type.headers` must stay `false`. Left on, the producer
    writes `__TypeId__: com.demo.order_service.events.OrderPlacedEvent`, and the consumer —
    which only has `com.demo.inventory_service.events.OrderPlacedEvent` — fails to
    deserialize every single message. Consumers use `StringDeserializer` plus a
    `StringJsonMessageConverter` bean, which takes the target type from the
    `@KafkaListener` method parameter instead.
-19. **`*IT` classes do not run under `./mvnw test`.** Surefire only picks up `*Test`,
+24. **`*IT` classes do not run under `./mvnw test`.** Surefire only picks up `*Test`,
    `Test*`, `*Tests`, `*TestCase`. The integration tests are named `*IT` and run under
    **`./mvnw verify`** via failsafe. A green `test` run therefore proves *less* than it
    looks — check which plugin actually executed.
-20. **Tests must set `spring.kafka.admin.auto-create: false`.** Otherwise every
+25. **Tests must set `spring.kafka.admin.auto-create: false`.** Otherwise every
    `@SpringBootTest` spends ~45 s watching `KafkaAdmin` retry the `NewTopic` beans against
    a broker that is not running. It is not a failure, just a silent 10x slowdown.
-21. **Running Kafka on Windows without Docker:** the `bin/windows/*.bat` scripts die with
+26. **Running Kafka on Windows without Docker:** the `bin/windows/*.bat` scripts die with
     *"The input line is too long"* — the expanded classpath exceeds cmd's 8191-char limit
     under any deep path. Bypass them and let the JVM expand the wildcard itself:
     `java -cp "<kafka>/libs/*" kafka.Kafka <config>` (and `kafka.tools.StorageTool` to
     format KRaft storage first). Also avoid passing `-Dlog4j.configuration=` through
     PowerShell, which mangles it.
-22. **Spring Boot 4 moved the test-slice annotations.** They are no longer under
+27. **Spring Boot 4 moved the test-slice annotations.** They are no longer under
    `org.springframework.boot.test.autoconfigure.*`:
    - `@DataJpaTest` → `org.springframework.boot.data.jpa.test.autoconfigure`
    - `@WebMvcTest` → `org.springframework.boot.webmvc.test.autoconfigure`
 
    Every tutorial online still shows the Boot 3 packages, so the import will look right and
    fail to resolve. `@MockitoBean` (not `@MockBean`) is likewise the current spelling.
-23. **DB passwords are `${MYSQL_PASSWORD:root}` placeholders — keep them that way.**
+28. **DB passwords are `${MYSQL_PASSWORD:root}` placeholders — keep them that way.**
    `config-repo/order-service.yaml` and `inventory-service.yaml` previously carried
    `password: "root"` in plaintext. Fixed 2026-08-25, and `config-repo`'s history was
    squashed to one commit before its first push, so the literal credential never reached
    GitHub at all. The `:root` default means local runs still need no env var. **Do not
    reintroduce a literal password** — `config-repo` is public, and history is forever once
    pushed. Phase 14 replaces the default with Secret Manager.
-24. **`java` on PATH is Java 8.** Use JDK 21: `JAVA_HOME=C:\Users\Karthik\.jdks\ms-21.0.12`.
+29. **`java` on PATH is Java 8.** Use JDK 21: `JAVA_HOME=C:\Users\Karthik\.jdks\ms-21.0.12`.
    `mvn` is not on PATH at all — use each module's `./mvnw`.
-25. **Both DBs share `localhost:3306`** when running against the host MySQL. Compose splits
+30. **Both DBs share `localhost:3306`** when running against the host MySQL. Compose splits
     them into genuinely separate instances (verified 2026-08-26). The design called for
     3306/3307. Fine locally;
    Compose and the GCP data VM will split the schemas properly. Be honest about this.
-26. **Eureka registration lags roughly 40 s after boot** (client replication interval). An
+31. **Eureka registration lags roughly 40 s after boot** (client replication interval). An
     empty `/eureka/apps` immediately after startup is normal, not a failure.
-27. Maven needs network on first run — don't pass `-o`.
-28. `.idea/` is intentionally untracked; `.run/` is intentionally tracked.
-29. **Part B toolchain is half-installed.** Docker Desktop 29.7.2 is present and working;
+32. Maven needs network on first run — don't pass `-o`.
+33. `.idea/` is intentionally untracked; `.run/` is intentionally tracked.
+34. **Part B toolchain is half-installed.** Docker Desktop 29.7.2 is present and working;
     `gcloud`, `kubectl`, `helm` and `terraform` are not. Phase 12 installs those.
     Note Docker's CLI is only on the **machine** PATH — a shell started before the install
     will not see it. Use the full path
@@ -480,6 +494,27 @@ A 200 with **empty** `propertySources` means the filename doesn't match
 ## 10. Change log
 
 Newest first. Add an entry for every meaningful change.
+
+### 2026-08-26 — Phase 9 complete: the whole platform runs from containers
+- **Seven multi-stage Dockerfiles.** JDK builder → JRE runtime, non-root uid 10001, layered
+  jar extraction with `-Djarmode=tools ... extract --layers --launcher`. Note that produces
+  an exploded directory, **not** an `app.jar`, so the entrypoint is
+  `org.springframework.boot.loader.launch.JarLauncher`.
+- A BuildKit cache mount on `/root/.m2` is shared across all seven builds, so Spring Boot is
+  resolved once, not seven times. Cold build 8.3 min; images 538–655 MB.
+- **`MaxRAMPercentage` needed `mem_limit` to mean anything.** Without a container limit the
+  JVM sees the whole host and the flag is decoration — exactly the kind of thing this project
+  criticises elsewhere. With limits: 768m → 576 MB heap, 512m → 384 MB, verified.
+- **Kafka now has two listeners.** `kafka:9092` for containers, `localhost:29092` for the
+  host. One advertised address cannot serve both, because the client reconnects to whatever
+  address the broker hands back. **The host port changed from 9092 to 29092.**
+- Last hard-coded `localhost` removed: `spring.config.import` is now
+  `configserver:${CONFIG_SERVER_URL:http://localhost:8888}`.
+- `depends_on: condition: service_healthy` replaces sleeps — which only works because the
+  MySQL healthcheck was fixed in Phase 7 to check TCP rather than the socket.
+- Added `.env.example` (committed) and a gitignored `.env`.
+- **Verified from images alone:** happy path plus both failure paths through the gateway,
+  `javac` absent from runtime images, all services running as `appuser`.
 
 ### 2026-08-26 — Phase 8 complete: payment-service and Resilience4j
 - New `payment-service` module (port 8084): mocked, **idempotent by orderId**, switchable at
