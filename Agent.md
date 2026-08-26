@@ -96,7 +96,7 @@ aggregator pom, so "build everything" means looping over modules.
 | `api-gateway-service` | 8080 | Single entry point; the only public surface | yes | yes, public |
 | `order-service` | 8081 | Order lifecycle, `order_db` | yes | yes |
 | `inventory-service` | 8082 | Stock + reservations, `inventory_db` | yes | yes |
-| `notification-service` | 8083 | Consumes events, mock email | yes | yes |
+| `notification-service` | 8083 | Consumes both result topics, mock email. **No database** | yes | yes |
 | `payment-service` | tbd | Mocked, synchronous — Resilience4j's target | planned | yes |
 | MySQL | 3306 | **both** schemas on one instance | — | on the data VM |
 | Kafka | 9092 | `order.placed`, `inventory.reserved`, `inventory.failed` | — | on the data VM |
@@ -218,8 +218,19 @@ Entities live in a `models` package, not `entity`.
   against a real broker and real MySQL.
 - Kafka and Resilience4j are on the classpath but still unused — Phases 3 and 8.
 
-### `notification-service`, `api-gateway-service` — skeletons
-Application classes only. Both are config clients. The gateway has **no routes** yet.
+### `notification-service` — Phase 6 complete
+- `events/` — `InventoryReservedEvent`, `InventoryFailedEvent`, `KafkaTopics` (third copy)
+- `notification/` — `Notification` record, `NotificationSender` interface,
+  `LoggingNotificationSender`
+- `kafka/InventoryEventListener` — one listener per result topic, own consumer group
+- `config/KafkaConfig` — converter, string template, error handler, DLT topics only
+- **No JPA, no MySQL, no Lombok on the classpath.** The first two make "knows nothing about
+  other services' data" a build-time guarantee rather than a convention.
+- Does **not** deduplicate; a redelivery sends a second email, and a test asserts it.
+- 6 tests (3 unit + 3 IT)
+
+### `api-gateway-service` — skeleton
+Application class only, and a config client. **No routes yet** — Phase 7.
 
 ### `discovery-service`, `config-service` — working
 See §8 for the Config Server's working-directory constraint.
@@ -410,7 +421,8 @@ Ordered roughly by how much time each one costs when forgotten.
     `gcloud`, `kubectl`, `helm` and `terraform` are not. Phase 12 installs those.
     Note Docker's CLI is only on the **machine** PATH — a shell started before the install
     will not see it. Use the full path
-    `C:\Program Files\Docker\Dockeresourcesin\docker.exe` or start a new shell.
+    `C:\Program Files\Docker\Docker
+esourcesin\docker.exe` or start a new shell.
 
 ---
 
@@ -442,6 +454,30 @@ A 200 with **empty** `propertySources` means the filename doesn't match
 ## 10. Change log
 
 Newest first. Add an entry for every meaningful change.
+
+### 2026-08-26 — Phase 6 complete: notification-service
+- Consumes `inventory.reserved` / `inventory.failed` and emits a mock email. **6 tests**
+  (3 unit + 3 integration against an embedded broker).
+- **The "no database" constraint is enforced by the build, not by discipline.** The module
+  has no JPA and no MySQL dependency, so it cannot query another service's tables even by
+  mistake. Confirmed at runtime too: zero Hikari/Hibernate/JDBC lines in its log.
+- Also has **no Lombok** — plain constructors and `LoggerFactory` here, unlike the others.
+- `NotificationSender` interface + `LoggingNotificationSender`, so tests assert on the
+  notification rather than on log text, and a real provider is a new implementation later.
+- **Its own consumer group**, so order-service and notification-service both see every
+  event. Sharing a group id would make them compete for messages.
+- `KafkaConfig` declares **only** the DLT topics, not the two it consumes — inventory-service
+  owns those, and a consumer that redeclares its source topics becomes a second owner of the
+  schema. It also declares a single `KafkaTemplate<String, String>`, which switches off
+  Boot's auto-configured one; harmless *here* because nothing publishes domain objects,
+  which is exactly the trap that broke the other two services in Phase 5.
+- **Duplicate notifications are possible and deliberately not prevented**, with a test
+  pinning that behaviour. No database means nowhere to record what was sent; an in-memory
+  set would be per-instance and lost on restart while looking like a fix.
+- Verified end-to-end on the Compose stack with all four services: confirmation and failure
+  emails both produced, the failure one carrying the reason from the event.
+- Raised the MySQL `start_period` to 300s. Cold init measured ~85s on an idle machine but
+  over 235s on a busy one; it self-corrects, but would break `depends_on: service_healthy`.
 
 ### 2026-08-26 — Docker installed; the Compose file finally ran, and was wrong
 - Docker Desktop 29.7.2 is installed and working. The blocker was the **Virtual Machine

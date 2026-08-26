@@ -89,10 +89,12 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
-      # A cold first run initialises the data directory, which measured ~85s on this
-      # machine. With the old 30s the container reported unhealthy while it was simply
-      # still starting.
-      start_period: 150s
+      # A cold first run initialises the data directory: measured ~85s on an idle machine
+      # and over 235s on a busy one, where it was still loading timezone tables. Too short
+      # a start_period reports a perfectly healthy container as unhealthy while it is merely
+      # starting -- harmless on its own (it self-corrects) but fatal to a
+      # `depends_on: condition: service_healthy`, which Phase 9 will use.
+      start_period: 300s
 
   # A genuinely separate instance, not a second schema on the first. Two services sharing
   # one database is the thing microservices are supposed to avoid, and running them apart
@@ -115,10 +117,12 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
-      # A cold first run initialises the data directory, which measured ~85s on this
-      # machine. With the old 30s the container reported unhealthy while it was simply
-      # still starting.
-      start_period: 150s
+      # A cold first run initialises the data directory: measured ~85s on an idle machine
+      # and over 235s on a busy one, where it was still loading timezone tables. Too short
+      # a start_period reports a perfectly healthy container as unhealthy while it is merely
+      # starting -- harmless on its own (it self-corrects) but fatal to a
+      # `depends_on: condition: service_healthy`, which Phase 9 will use.
+      start_period: 300s
 
 volumes:
   kafka-data:

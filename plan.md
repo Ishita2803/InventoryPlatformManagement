@@ -258,12 +258,32 @@ throwing or hanging, the order is durably committed, and its event waits `PENDIN
 outbox. A failed drain records the attempt and leaves the row pending; once the budget is
 spent the row is quarantined as `FAILED` and further drains ignore it.
 
-## Phase 6 — Notification Service
+## Phase 6 — Notification Service ✅ *(done 2026-08-26)*
 
-- [ ] Consume `inventory.reserved` / `inventory.failed`; log a mock email
-- [ ] Deliberately no knowledge of order-database internals
+- [x] Consumes `inventory.reserved` / `inventory.failed` and sends a mock email
+- [x] **No knowledge of order-database internals — enforced by the classpath.** This service
+      has no JPA and no MySQL dependency at all, so it *cannot* read another service's tables
+      even by accident. Verified: zero Hikari/Hibernate/JDBC lines in its startup log.
+- [x] `NotificationSender` interface with a logging implementation, so tests assert on what
+      was sent rather than scraping log output, and a real provider is a new class later
+- [x] Its **own consumer group**, so it and order-service both receive every event. A shared
+      group id would make them compete, and each event would be either notified or applied,
+      never both.
+- [x] Bounded retry + DLT, same shape as the other consumers
 
-**Exit:** a placed order produces a notification log line without Notification touching MySQL.
+**Deliberate limitation, tested rather than hidden:** this service **does not deduplicate**.
+Kafka is at-least-once, so a redelivered event sends a second email — and there is a test
+asserting exactly that, so nobody later assumes otherwise. The other two services dedupe with
+a `processed_event` table; this one has no database, and an in-memory set would be worse than
+nothing (per-instance, lost on restart, while looking like a solution). The real fix belongs
+at the provider, which accepts an idempotency key.
+
+**Exit:** met, verified end-to-end on the Compose stack with all four services running. One
+`POST /api/orders` for qty 3 produced an `ORDER_CONFIRMED` mock email naming the order; a
+second for qty 999 produced an `ORDER_FAILED` email carrying the real reason from the event
+("Available=7, requested=999") plus "You have not been charged". Both orders reached their
+correct status in `order_db` at the same time, which is what proves the two consumer groups
+each received every event.
 
 ## Phase 7 — API Gateway
 

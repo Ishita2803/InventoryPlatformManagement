@@ -1,0 +1,37 @@
+# Test configuration.
+#
+# Shadows src/main/resources/application.yaml, which carries a non-optional
+# `spring.config.import: configserver:http://localhost:8888`. Tests must not depend on
+# external infrastructure.
+#
+# Note there is no datasource here, and none is needed: this service has no JPA dependency.
+
+spring:
+  application:
+    name: notification-service
+
+  cloud:
+    config:
+      enabled: false
+    discovery:
+      enabled: false
+
+  kafka:
+    bootstrap-servers: localhost:9092
+    listener:
+      auto-startup: false
+    admin:
+      auto-create: false
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+    consumer:
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+
+eureka:
+  client:
+    enabled: false
+    register-with-eureka: false
+    fetch-registry: false

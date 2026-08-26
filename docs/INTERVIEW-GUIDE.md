@@ -11,10 +11,10 @@
 >    both drain the same outbox row; it's harmless because consumers are idempotent, and
 >    `SKIP LOCKED` is the clean fix" reads as senior. Being caught not knowing reads as
 >    junior.
-> 3. Everything below is **true as of Phases 0–5**. Status is tracked in
+> 3. Everything below is **true as of Phases 0–6**. Status is tracked in
 >    [`plan.md`](../plan.md); implementation detail in [`Agent.md`](../Agent.md).
 
-**Last updated:** 2026-08-26, after Phase 5 and the Docker Compose verification.
+**Last updated:** 2026-08-26, after Phase 6.
 
 ---
 
@@ -85,8 +85,11 @@ Draw this. It's the whole system in six boxes:
        ▼   moves order PENDING → INVENTORY_RESERVED / INVENTORY_FAILED
 ```
 
-Then say: *"Config Server and Eureka sit alongside for configuration and discovery. Gateway,
-notification and payment are planned but not built yet."* — honest, and it pre-empts the
+Notification-service also subscribes to those two result topics, under its **own consumer
+group**, so it receives every event too and emails the customer.
+
+Then say: *"Config Server and Eureka sit alongside for configuration and discovery. Gateway
+and payment are planned but not built yet."* — honest, and it pre-empts the
 question.
 
 ---
@@ -102,7 +105,7 @@ question.
 | Kafka | 9092 | **Running** | 3 topics + DLTs, KRaft mode | The decoupling. No ZooKeeper — KRaft is the modern setup. |
 | MySQL | 3306 | **Running** | `order_db`, `inventory_db` | A database per service. Currently one instance, two schemas — see honesty section. |
 | `api-gateway-service` | 8080 | **Skeleton** | Single entry point | Planned Phase 7. **Application class only, no routes.** |
-| `notification-service` | 8083 | **Skeleton** | Consume events, mock email | Planned Phase 6. **Application class only, no consumer.** |
+| `notification-service` | 8083 | **Built** | Consumes both result topics, sends a mock email | Proves the events are genuinely reusable: adding a whole new consumer required changing neither producer. Has **no database at all**. |
 | `payment-service` | — | **Not created** | Mocked, synchronous | Planned Phase 8. Exists to give Resilience4j a real target. |
 
 ### Why each *technology* is there
@@ -391,8 +394,8 @@ processed_event  (same shape as above)
 
 | Fact | Value |
 |---|---|
-| Tests | **71** — 42 order-service, 29 inventory-service |
-| Test split | 54 unit/slice, 17 integration against a real embedded broker |
+| Tests | **77** — 42 order-service, 29 inventory-service, 6 notification-service |
+| Test split | 57 unit/slice, 20 integration against a real embedded broker |
 | Optimistic-lock retry | 4 attempts, exponential backoff with jitter |
 | Kafka consumer retry | 3 attempts, then DLT |
 | Outbox publish retry | 10 attempts (3 in tests), then quarantined as `FAILED` |
@@ -470,7 +473,6 @@ not two.
 
 | Not built | Phase |
 |---|---|
-| Notification service consumer — skeleton only | 6 |
 | API Gateway routes — skeleton only, no routing | 7 |
 | Payment service, Resilience4j circuit breaker | 8 |
 | Dockerfiles per service (the Compose file for Kafka + MySQL **is** verified working) | 9 |
