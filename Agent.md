@@ -533,6 +533,10 @@ esourcesin\docker.exe` or start a new shell.
 47. **`KafkaProperties` relocated in Spring Boot 4** — no longer in
     `org.springframework.boot.autoconfigure.kafka`. If one value is needed, read the property
     with `@Value("${spring.kafka.bootstrap-servers}")` rather than chasing the new package.
+48. **Locally built images live under the `order-platform/` namespace, not the bare service
+    name.** `docker compose build` tags them `order-platform/order-service:latest`, so
+    `docker tag order-service:latest ...` fails with *"No such image"*. Check `docker images`
+    for the real local tag before pushing to Artifact Registry.
 
 ## 9. Startup order and verification (local)
 
@@ -562,6 +566,29 @@ A 200 with **empty** `propertySources` means the filename doesn't match
 ## 10. Change log
 
 Newest first. Add an entry for every meaningful change.
+
+### 2026-08-30 — Phase 12 complete: GCP foundation and local toolchain
+- **gcloud CLI installed and authenticated**; Docker Desktop was already present since
+  Phase 9. `kubectl`/`helm`/`terraform` still not installed — deferred to the phase that
+  needs them (15).
+- **GCP project created as `inventorymanagement-507107`**, not `order-platform` as
+  `plan.md` originally named it — the intended name was already taken. Region
+  `us-central1`, zone `us-central1-a`, set as the active gcloud config.
+- Billing enabled and a **budget alert (50/90/100%)** created in the console before any
+  resource existed.
+- APIs enabled: `container`, `compute`, `artifactregistry`, `secretmanager`, `cloudbuild`,
+  `iam` (the project also carries a long list of unrelated APIs — BigQuery, DNS, Pub/Sub,
+  etc. — that came bundled with the project template; harmless, not part of this design).
+- **Artifact Registry Docker repo `order-platform-repo`** created in `us-central1`.
+  `order-service`'s Phase 9 image pushed as the smoke test and confirmed visible.
+- **`deploy/gcp/00-bootstrap.sh`** captures the reproducible parts (config, API enables,
+  repo creation, Docker auth) — not the budget alert, which has no clean gcloud CLI surface
+  and was done by hand in the console.
+- **Trap found:** local images build under the `order-platform/` Compose namespace, not
+  the bare service name. `docker tag order-service:latest ...` fails with "No such image" —
+  the actual local tag is `order-platform/order-service:latest`, found via `docker images`.
+- Karthik is running Part B's remaining phases (13-18) himself from here; this session's
+  role is guidance and the bootstrap script only, not executing gcloud/kubectl directly.
 
 ### 2026-08-26 — Phase 11.5 complete: reconciliation, on both sides
 - **`OrderReconciliationService`** (order-service) sweeps orders stuck at

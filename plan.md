@@ -565,28 +565,31 @@ whether or not anyone is looking at them.
 These are order-of-magnitude figures for `us-central1` and they drift. Verify against the
 pricing calculator before committing, and set the Phase 12 budget alert *first*.
 
-## Phase 12 — GCP foundation and local toolchain
+## Phase 12 — GCP foundation and local toolchain ✅ *(done 2026-08-30)*
 
-Nothing here touches the application. Do it in one sitting.
+Nothing here touches the application. Done in one sitting.
 
-- [ ] **Install the local toolchain** — none of it is on this machine today:
-      Google Cloud CLI, `kubectl` (`gcloud components install kubectl`), Docker Desktop.
-      Also put JDK 21 on `PATH`; `java` currently resolves to Java 8.
-- [ ] Create the GCP account and enable billing (free-trial credit applies if unused)
-- [ ] **Set a budget with alert thresholds at 50 / 90 / 100 % before creating any
-      resource.** This is the guardrail that stops a forgotten cluster becoming a
-      surprise bill.
-- [ ] Create project `order-platform`, set it as default, pick one region (`us-central1`)
-      and stay in it — cross-region traffic is billed
-- [ ] Enable APIs: `container`, `compute`, `artifactregistry`, `secretmanager`,
+- [x] **Install the local toolchain** — Google Cloud CLI installed and authenticated;
+      Docker Desktop already present since Phase 9.
+- [x] Create the GCP account and enable billing
+- [x] **Set a budget with alert thresholds at 50 / 90 / 100 % before creating any
+      resource.**
+- [x] Create project (named `inventorymanagement-507107`, not `order-platform` as
+      originally planned — the intended name was taken), set as default, region
+      `us-central1` / zone `us-central1-a`
+- [x] Enable APIs: `container`, `compute`, `artifactregistry`, `secretmanager`,
       `cloudbuild`, `iam`
-- [ ] Create the Artifact Registry Docker repository
-- [ ] Push one Phase 9 image to Artifact Registry as a smoke test
-- [ ] Capture every command in `deploy/gcp/00-bootstrap.sh` — reproducible, and it doubles
-      as documentation
+- [x] Create the Artifact Registry Docker repository (`order-platform-repo`, `us-central1`)
+- [x] Push one Phase 9 image (`order-service`) to Artifact Registry as a smoke test
+- [x] Capture every command in `deploy/gcp/00-bootstrap.sh`
 
-**Exit:** `gcloud auth list` and `gcloud config list` are correct, the budget alert exists,
-and one image is visible in Artifact Registry.
+**Note:** local images build under the `order-platform/` Compose namespace (e.g.
+`order-platform/order-service:latest`), not the bare service name — the first tag attempt
+failed with "No such image: order-service:latest" until this was found via `docker images`.
+
+**Exit:** met. `gcloud config list` shows project `inventorymanagement-507107`, region
+`us-central1`, zone `us-central1-a`; the budget alert exists; `order-service` is visible in
+Artifact Registry under `order-platform-repo`.
 
 ## Phase 13 — The data VM (MySQL + Kafka)
 
