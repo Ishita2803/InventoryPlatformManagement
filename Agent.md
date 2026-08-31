@@ -567,6 +567,32 @@ A 200 with **empty** `propertySources` means the filename doesn't match
 
 Newest first. Add an entry for every meaningful change.
 
+### 2026-08-31 — Phase 13 complete: the data VM, exit criterion deferred to Phase 15
+- **VM `order-platform-data-vm`** created: `e2-medium`, Debian 12 **x86** (not arm64 — the
+  default `e2-medium` image family is x86; worth checking before assuming an image matches
+  the machine type), 20 GB balanced PD, no external IP, network tag `data-vm`. Internal IP
+  reserved as static: `10.128.0.2`.
+- **Cloud NAT added** (`data-vm-nat` gateway + `order-platform-router`) — not in the original
+  plan. A VM with no external IP has no outbound internet either, so `apt install docker` and
+  the startup script failed silently until NAT gave it a path out. No external IP blocks
+  inbound only if something also provides outbound; it doesn't come for free.
+- **Firewall rules** open TCP 3306/3307/9092, scoped to the default subnet range as a
+  stand-in for "the future GKE node subnet" — that subnet doesn't exist until Phase 15, so
+  this is provisional and should be tightened once it does.
+- **`deploy/gcp/docker-compose.data-vm.yml`** — Kafka 3.9 in KRaft mode advertising
+  `10.128.0.2:9092` (never `localhost`, which would hand off-VM clients an unreachable
+  address), plus two separate MySQL 8 instances (`order-mysql`:3306, `inventory-mysql`:3307),
+  each with a non-root `MYSQL_USER` scoped to its own database. Heaps tuned for the 4 GB
+  `e2-medium`: Kafka 768M, MySQL 384M × 2. `.env.example` committed; the real `.env` (with
+  actual passwords) is not.
+- **Deployed and running** — `docker compose up -d` confirmed healthy on the VM.
+- **Exit criterion deliberately left unverified**: "from a throwaway pod in GKE, `mysql`
+  connects to both schemas and Kafka round-trips a message" cannot be checked without a GKE
+  cluster, which doesn't exist until Phase 15. Rather than fake this with an in-place
+  `docker exec` check (which wouldn't test the same network path a real pod uses), the
+  verification is deferred and added as the **first task in Phase 15**, before any real
+  workload deploys.
+
 ### 2026-08-30 — Phase 12 complete: GCP foundation and local toolchain
 - **gcloud CLI installed and authenticated**; Docker Desktop was already present since
   Phase 9. `kubectl`/`helm`/`terraform` still not installed — deferred to the phase that

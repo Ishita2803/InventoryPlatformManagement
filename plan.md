@@ -591,26 +591,31 @@ failed with "No such image: order-service:latest" until this was found via `dock
 `us-central1`, zone `us-central1-a`; the budget alert exists; `order-service` is visible in
 Artifact Registry under `order-platform-repo`.
 
-## Phase 13 — The data VM (MySQL + Kafka)
+## Phase 13 — The data VM (MySQL + Kafka) ✅ *(infrastructure done 2026-08-30; exit criterion deferred to Phase 15)*
 
 One `e2-medium` VM runs both, via the Phase 3 Compose file.
 
-- [ ] Create a VPC (or use default) plus firewall rules. **MySQL 3306 and Kafka 9092 must
-      be reachable only from the GKE node subnet — never from `0.0.0.0/0`.**
-- [ ] Create the VM: `e2-medium`, Debian 12, 20 GB balanced PD, **no external IP** (reach
+- [x] Create a VPC (or use default) plus firewall rules. **MySQL 3306 and Kafka 9092 must
+      be reachable only from the GKE node subnet — never from `0.0.0.0/0`.** *(Scoped to the
+      default subnet range as a stand-in for the future GKE node subnet, since that subnet
+      doesn't exist until Phase 15.)*
+- [x] Create the VM: `e2-medium`, Debian 12, 20 GB balanced PD, **no external IP** (reach
       it over IAP for SSH), Docker installed by startup script
-- [ ] Deploy MySQL 8 + single-broker Kafka (KRaft) with Compose, both on named volumes so
+- [x] Deploy MySQL 8 + single-broker Kafka (KRaft) with Compose, both on named volumes so
       a VM restart doesn't lose data
-- [ ] **Tune heaps for 4 GB total:** MySQL `innodb_buffer_pool_size` around 768 MB, Kafka
+- [x] **Tune heaps for 4 GB total:** MySQL `innodb_buffer_pool_size` around 768 MB, Kafka
       heap around 768 MB. The defaults assume a dedicated machine and will OOM here.
-- [ ] Advertise Kafka on the VM's **internal** IP — a broker advertising `localhost`
+      *(384M per MySQL instance × 2 + Kafka 768M heap = the 4 GB budget.)*
+- [x] Advertise Kafka on the VM's **internal** IP — a broker advertising `localhost`
       accepts the connection and then hands clients an unreachable address, which presents
       as a mysterious timeout
-- [ ] Create `order_db` and `inventory_db`, with a non-root application user per schema
-- [ ] Reserve the VM's internal IP so it survives a restart
+- [x] Create `order_db` and `inventory_db`, with a non-root application user per schema
+- [x] Reserve the VM's internal IP so it survives a restart
 
 **Exit:** from a throwaway pod in GKE, `mysql` connects to both schemas and a Kafka console
-producer/consumer round-trips a message.
+producer/consumer round-trips a message. **Deliberately left unverified — no GKE cluster
+exists yet.** Verify this as the first thing done in Phase 15, once a pod can actually reach
+the data VM's internal IP.
 
 ## Phase 14 — Secret Manager
 
@@ -634,6 +639,9 @@ This phase deletes a real defect: `config-repo/order-service.yaml` and
 
 ## Phase 15 — GKE cluster and manifests
 
+- [ ] **First, verify Phase 13's deferred exit criterion:** from a throwaway pod, confirm
+      `mysql` connects to both schemas on the data VM and a Kafka console producer/consumer
+      round-trips a message over its internal IP, before deploying anything real.
 - [ ] Create a **zonal** cluster (regional multiplies control-plane cost and node count)
       with a Spot node pool of 2 × `e2-medium`, autoscaling 1-3
 - [ ] `deploy/k8s/` — per service: `Deployment`, `Service`, liveness/readiness probes on
