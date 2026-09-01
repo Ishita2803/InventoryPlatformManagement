@@ -1,0 +1,14 @@
+# Non-secret env shared across services. Kafka and MySQL still run off-cluster on the
+# Phase 13 data VM, reached over its internal IP -- Phase 15 does not move them in-cluster.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: platform-config
+  namespace: default
+data:
+  CONFIG_SERVER_URL: "http://config-service:8888"
+  KAFKA_BOOTSTRAP_SERVERS: "10.128.0.2:9092"
+  ORDER_DB_URL: "jdbc:mysql://10.128.0.2:3306/order_db"
+  INVENTORY_DB_URL: "jdbc:mysql://10.128.0.2:3307/inventory_db"
+  PAYMENT_BASE_URL: "http://payment-service:8084"
+  SPRING_PROFILES_ACTIVE: "k8s"

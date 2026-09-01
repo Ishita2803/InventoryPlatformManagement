@@ -1,0 +1,53 @@
+# config-service has no Eureka client and no database -- it clones config-repo straight
+# from GitHub, identically to local dev, so it needs no k8s-specific config-repo overlay.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: config-service
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: config-service
+  template:
+    metadata:
+      labels:
+        app: config-service
+    spec:
+      containers:
+        - name: config-service
+          image: us-central1-docker.pkg.dev/inventorymanagement-507107/order-platform-repo/config-service:204439c
+          ports:
+            - containerPort: 8888
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+          readinessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8888
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8888
+            initialDelaySeconds: 45
+            periodSeconds: 15
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: config-service
+  namespace: default
+spec:
+  selector:
+    app: config-service
+  ports:
+    - port: 8888
+      targetPort: 8888

@@ -1,0 +1,74 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: inventory-service
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: inventory-service
+  template:
+    metadata:
+      labels:
+        app: inventory-service
+    spec:
+      serviceAccountName: order-platform-workload
+      containers:
+        - name: inventory-service
+          image: us-central1-docker.pkg.dev/inventorymanagement-507107/order-platform-repo/inventory-service:204439c
+          ports:
+            - containerPort: 8082
+          envFrom:
+            - configMapRef:
+                name: platform-config
+          env:
+            - name: MYSQL_USER
+              value: "inventory_app"
+            - name: MYSQL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mysql-inventory-password
+                  key: password
+          resources:
+            requests:
+              memory: "768Mi"
+              cpu: "250m"
+            limits:
+              memory: "768Mi"
+              cpu: "750m"
+          readinessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8082
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8082
+            initialDelaySeconds: 60
+            periodSeconds: 15
+          volumeMounts:
+            - name: mysql-inventory-password
+              mountPath: "/mnt/secrets-store/inventory"
+              readOnly: true
+      volumes:
+        - name: mysql-inventory-password
+          csi:
+            driver: secrets-store.csi.k8s.io
+            readOnly: true
+            volumeAttributes:
+              secretProviderClass: mysql-inventory-password
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: inventory-service
+  namespace: default
+spec:
+  selector:
+    app: inventory-service
+  ports:
+    - port: 8082
+      targetPort: 8082
