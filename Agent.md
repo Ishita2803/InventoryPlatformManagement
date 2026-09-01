@@ -77,7 +77,7 @@ not feature count or delivery speed. Concretely:
 | Boilerplate | Lombok |
 | Container | Docker Desktop 29.7.2. **Seven multi-stage Dockerfiles**; `docker compose up` runs the whole platform |
 | Orchestration | GKE Standard, zonal, Spot nodes *(not yet created)* |
-| Secrets | GCP Secret Manager via CSI driver *(not yet created)* |
+| Secrets | GCP Secret Manager, two secrets + scoped-access GSA created *(CSI driver mount deferred to Phase 15 — no cluster yet)* |
 
 The Gateway is the **MVC/Servlet** variant, not WebFlux/Netty. The source PDF assumed
 WebFlux; the actual pom does not. Don't reintroduce reactive types on that assumption.
@@ -566,6 +566,25 @@ A 200 with **empty** `propertySources` means the filename doesn't match
 ## 10. Change log
 
 Newest first. Add an entry for every meaningful change.
+
+### 2026-09-01 — Phase 14 partial: Secret Manager set up, cluster-dependent steps deferred
+- Created secrets `mysql-order-password` and `mysql-inventory-password` in Secret Manager,
+  and a dedicated GSA `order-platform-workload` with **per-secret** `secretAccessor` grants
+  (via each secret's own Permissions tab) rather than a project-wide role.
+- `config-repo/order-service.yaml` and `inventory-service.yaml`: removed the
+  `${MYSQL_USER:root}` / `${MYSQL_PASSWORD:root}` defaults — a missing credential now fails
+  loudly instead of silently trying `root`. Local `docker-compose.yml` updated to pass
+  `MYSQL_USER`/`MYSQL_PASSWORD` explicitly for `order-service` and `inventory-service`,
+  since it had been relying on the default just removed.
+- **Deferred to Phase 15, not skipped:** enabling Workload Identity and installing the
+  Secret Manager CSI driver both require a running GKE cluster, which doesn't exist until
+  Phase 15. Same split as Phase 13's exit criterion.
+- **Known, accepted gap — do not claim this is fixed:** the data VM's real credentials
+  (`MYSQL_ROOT_PASSWORD`, `ORDER_DB_PASSWORD`, `INVENTORY_DB_PASSWORD`) are all the same
+  weak value (`root123`), set directly in the VM's `.env` (never committed to git).
+  Karthik chose to defer rotating this rather than block on it. The two Secret Manager
+  secrets created above currently hold this same value. Revisit before claiming Phase 14
+  is fully done.
 
 ### 2026-08-31 — Phase 13 complete: the data VM, exit criterion deferred to Phase 15
 - **VM `order-platform-data-vm`** created: `e2-medium`, Debian 12 **x86** (not arm64 — the

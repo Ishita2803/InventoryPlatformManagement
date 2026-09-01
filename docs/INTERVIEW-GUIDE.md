@@ -647,7 +647,7 @@ not two.
 | Not built | Phase |
 |---|---|
 | README, ADRs, OpenAPI, **any throughput benchmark** | 11 |
-| Everything GCP: GKE, Secret Manager, deployment | 12–18 |
+| GKE cluster, Workload Identity, Secret Manager CSI mount, public ingress, CI/CD to GKE | 15–17 |
 
 **One thing that is genuinely broken right now, and say so if the saga comes up:** three
 orders are permanently stuck at `INVENTORY_RESERVED` holding stock. The `processed_event` row

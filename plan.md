@@ -617,24 +617,35 @@ producer/consumer round-trips a message. **Deliberately left unverified — no G
 exists yet.** Verify this as the first thing done in Phase 15, once a pod can actually reach
 the data VM's internal IP.
 
-## Phase 14 — Secret Manager
+## Phase 14 — Secret Manager 🟡 *(secrets + IAM + config fix done 2026-09-01; cluster-dependent steps deferred to Phase 15)*
 
 This phase deletes a real defect: `config-repo/order-service.yaml` and
-`inventory-service.yaml` currently contain `password: "root"` **committed in plaintext**.
+`inventory-service.yaml` used to contain `password: "${MYSQL_PASSWORD:root}"` — a plaintext
+password default, committed in git.
 
-- [ ] Create secrets `mysql-order-password` and `mysql-inventory-password`
-- [ ] Create a Google service account for the workloads; grant
-      `roles/secretmanager.secretAccessor` scoped to those secrets, not project-wide
-- [ ] Enable **Workload Identity** on the cluster and bind the Kubernetes service account
-      to the Google one, so no JSON key file ever exists
-- [ ] Install the **Secret Manager CSI driver**; mount the secrets and expose them as env vars
-- [ ] Change the `config-repo` yamls to `password: ${MYSQL_PASSWORD}` — placeholders only
-- [ ] Rotate the `root` password that was in git, and confirm it is no longer used anywhere
+- [x] Create secrets `mysql-order-password` and `mysql-inventory-password`
+- [x] Create a Google service account for the workloads (`order-platform-workload`); grant
+      `roles/secretmanager.secretAccessor` scoped to those two secrets individually (via
+      each secret's own Permissions tab), not project-wide
+- [ ] **Deferred to Phase 15 — no cluster exists yet.** Enable **Workload Identity** on the
+      cluster and bind the Kubernetes service account to the Google one, so no JSON key
+      file ever exists
+- [ ] **Deferred to Phase 15 — same reason.** Install the **Secret Manager CSI driver**;
+      mount the secrets and expose them as env vars
+- [x] Change the `config-repo` yamls to `${MYSQL_USER}` / `${MYSQL_PASSWORD}` — no default,
+      so a missing credential fails loudly instead of silently trying `root`. Local Compose
+      now passes `MYSQL_USER`/`MYSQL_PASSWORD` explicitly rather than relying on the removed
+      default.
+- [ ] **Not done — declined for now.** The VM's actual credentials (`MYSQL_ROOT_PASSWORD`,
+      `ORDER_DB_PASSWORD`, `INVENTORY_DB_PASSWORD`) are all the same weak value (`root123`),
+      set directly in the VM's `.env`, never committed to git. This is a live defect (one
+      leaked value compromises root plus both app users) but Karthik chose to defer
+      rotating it rather than block on it. **Do not claim this is fixed.**
 - [ ] *Optional, only if a Boot 4.1-compatible release exists:*
       `spring-cloud-gcp-starter-secretmanager` for `sm://` property references. Do not
       assume one exists — the CSI-driver path above carries no version risk.
 
-**Exit:** a pod reads its DB password from Secret Manager, `git grep -i password` in
+**Exit (deferred to Phase 15):** a pod reads its DB password from Secret Manager, `git grep -i password` in
 `config-repo` finds only placeholders, and the old credential is revoked.
 
 ## Phase 15 — GKE cluster and manifests
