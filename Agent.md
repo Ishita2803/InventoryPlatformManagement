@@ -76,8 +76,8 @@ not feature count or delivery speed. Concretely:
 | Build | Maven (wrapper per module; there is **no parent aggregator pom**) |
 | Boilerplate | Lombok |
 | Container | Docker Desktop 29.7.2. **Seven multi-stage Dockerfiles**; `docker compose up` runs the whole platform |
-| Orchestration | GKE Standard, zonal, Spot nodes *(not yet created)* |
-| Secrets | GCP Secret Manager, two secrets + scoped-access GSA created *(CSI driver mount deferred to Phase 15 — no cluster yet)* |
+| Orchestration | GKE Standard, zonal, Spot nodes — `order-platform-cluster` running, Workload Identity enabled |
+| Secrets | GCP Secret Manager, two secrets + scoped-access GSA created *(CSI driver mount + KSA↔GSA binding still open — no workload deployed yet)* |
 
 The Gateway is the **MVC/Servlet** variant, not WebFlux/Netty. The source PDF assumed
 WebFlux; the actual pom does not. Don't reintroduce reactive types on that assumption.
@@ -566,6 +566,32 @@ A 200 with **empty** `propertySources` means the filename doesn't match
 ## 10. Change log
 
 Newest first. Add an entry for every meaningful change.
+
+### 2026-09-01 — Phase 15 started: cluster created, Phase 13's deferred exit criterion verified
+- **`order-platform-cluster`** created: GKE Standard, zonal (`us-central1-a`), default
+  network/subnet, Spot `e2-medium` node pool, autoscaling 1-3.
+- **Workload Identity is not on by default** for a new Standard cluster — corrected after
+  first assuming otherwise. `workloadIdentityConfig` came back `{}` (empty) right after
+  creation. Fixed with `gcloud container clusters update --workload-pool=<project>.svc.id.goog`
+  followed by `gcloud container node-pools update --workload-metadata=GKE_METADATA`; the
+  second command **recreates every node**, so do it before anything is deployed, not after.
+- **The cluster's pod range doesn't fall inside the data-VM firewall rules.** GKE Standard is
+  VPC-native by default: nodes get IPs from the subnet's primary range (`10.128.0.0/20` here,
+  which the Phase 13 firewall rules already allowed), but pods get a separate secondary range
+  GKE auto-picked (`10.83.128.0/17`). A pod's traffic to the data VM keeps the pod's own
+  source IP rather than getting SNAT'd to the node IP — `ip-masq-agent`'s default
+  non-masquerade list includes all of RFC1918, and both the pod range and the VM are RFC1918
+  — so the existing rules silently didn't cover pods. Fixed by adding the pod CIDR to all
+  three data-VM firewall rules (`allow-kafka-internal`, `allow-mysql-internal`,
+  `allow-mysql-inventory-internal`). **Anyone recreating the cluster with a different pod
+  range must redo this** — it's not automatic.
+- **Verified Phase 13's deferred exit criterion** from throwaway pods
+  (`kubectl run --rm --attach`): `mysql:8.0` reached both `order_db` (3306) and
+  `inventory_db` (3307) on `10.128.0.2`; `apache/kafka:3.9.0`'s console producer/consumer
+  round-tripped a message through `10.128.0.2:9092`.
+- Still open in Phase 15: per-service `Deployment`/`Service` manifests, the `k8s` Spring
+  profile that drops `discovery-service`, in-cluster `config-service`, and the
+  KSA↔GSA Workload Identity binding + Secret Manager CSI mount deferred from Phase 14.
 
 ### 2026-09-01 — Phase 14 partial: Secret Manager set up, cluster-dependent steps deferred
 - Created secrets `mysql-order-password` and `mysql-inventory-password` in Secret Manager,

@@ -612,10 +612,15 @@ One `e2-medium` VM runs both, via the Phase 3 Compose file.
 - [x] Create `order_db` and `inventory_db`, with a non-root application user per schema
 - [x] Reserve the VM's internal IP so it survives a restart
 
-**Exit:** from a throwaway pod in GKE, `mysql` connects to both schemas and a Kafka console
-producer/consumer round-trips a message. **Deliberately left unverified — no GKE cluster
-exists yet.** Verify this as the first thing done in Phase 15, once a pod can actually reach
-the data VM's internal IP.
+**Exit: met, verified 2026-09-01 in Phase 15.** From a throwaway pod (`mysql:8.0` and
+`apache/kafka:3.9.0` images, `kubectl run --rm --attach`), `mysql` connected to both
+`order_db` and `inventory_db` over the VM's internal IP, and a Kafka console
+producer/consumer round-tripped a message through `10.128.0.2:9092`. Getting there required
+widening `allow-kafka-internal`, `allow-mysql-internal`, and `allow-mysql-inventory-internal`
+to also allow `10.83.128.0/17` — the cluster's pod secondary range, which sits outside the
+`10.128.0.0/20` range those rules originally allowed. Pod-to-VM traffic keeps the pod's own
+source IP (both are RFC1918, so `ip-masq-agent`'s default rules do not masquerade it), which
+is why the node range alone wasn't enough.
 
 ## Phase 14 — Secret Manager 🟡 *(secrets + IAM + config fix done 2026-09-01; cluster-dependent steps deferred to Phase 15)*
 
@@ -648,13 +653,18 @@ password default, committed in git.
 **Exit (deferred to Phase 15):** a pod reads its DB password from Secret Manager, `git grep -i password` in
 `config-repo` finds only placeholders, and the old credential is revoked.
 
-## Phase 15 — GKE cluster and manifests
+## Phase 15 — GKE cluster and manifests 🟡 *(cluster + connectivity + Workload Identity done 2026-09-01)*
 
-- [ ] **First, verify Phase 13's deferred exit criterion:** from a throwaway pod, confirm
+- [x] **First, verify Phase 13's deferred exit criterion:** from a throwaway pod, confirm
       `mysql` connects to both schemas on the data VM and a Kafka console producer/consumer
       round-trips a message over its internal IP, before deploying anything real.
-- [ ] Create a **zonal** cluster (regional multiplies control-plane cost and node count)
-      with a Spot node pool of 2 × `e2-medium`, autoscaling 1-3
+- [x] Create a **zonal** cluster (regional multiplies control-plane cost and node count)
+      with a Spot node pool, autoscaling 1-3 — `order-platform-cluster`, `us-central1-a`,
+      default network/subnet, `e2-medium` Spot nodes
+- [x] Enabled Workload Identity on the cluster and the node pool (`gcloud container
+      clusters update --workload-pool=...` then `node-pools update
+      --workload-metadata=GKE_METADATA`, which recreates every node) — deferred from Phase 14
+      since it needs a cluster to exist first
 - [ ] `deploy/k8s/` — per service: `Deployment`, `Service`, liveness/readiness probes on
       Actuator, resource requests **and** limits, `ConfigMap` for non-secret env
 - [ ] **Do not deploy `discovery-service`.** Add a `k8s` Spring profile that switches the
