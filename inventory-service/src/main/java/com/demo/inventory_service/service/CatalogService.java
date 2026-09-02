@@ -5,7 +5,9 @@ import com.demo.inventory_service.dto.CatalogItemResponse;
 import com.demo.inventory_service.dto.SetSalePriceRequest;
 import com.demo.inventory_service.exception.CatalogItemNotFoundException;
 import com.demo.inventory_service.models.CatalogItem;
+import com.demo.inventory_service.models.Product;
 import com.demo.inventory_service.repository.CatalogItemRepository;
+import com.demo.inventory_service.repository.ProductRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -18,6 +20,14 @@ import java.util.List;
  * fetched from vendor-service and denormalized onto {@link CatalogItem} every time the
  * price is set -- cheap (admin sets a price far less often than customers place orders)
  * and it means Phase D7/D8 never need a synchronous call back to vendor-service per order.
+ *
+ * <p>Also upserts this service's own {@code Product} row (Phase 1) for the sku if one
+ * doesn't exist yet. Without this, setting a sale price for a brand-new sku would leave
+ * {@code Inventory} with nowhere to record stock for it, and Phase D6's purchase-order
+ * fulfillment would fail with {@code ProductNotFoundException} the first time anyone
+ * tried to stock it -- setting a sale price is the moment "admin decided to sell this
+ * sku" actually happens, so it's the right place to register it, not an afterthought
+ * discovered when fulfillment broke.
  */
 @Service
 @RequiredArgsConstructor
@@ -25,6 +35,7 @@ import java.util.List;
 public class CatalogService {
 
     private final CatalogItemRepository catalogItemRepository;
+    private final ProductRepository productRepository;
     private final VendorServiceClient vendorServiceClient;
 
     @Transactional
@@ -32,6 +43,13 @@ public class CatalogService {
 
         VendorServiceClient.VendorProduct vendorProduct =
                 vendorServiceClient.getProductBySku(request.getSkuNumber());
+
+        if (productRepository.findBySku(request.getSkuNumber()).isEmpty()) {
+            Product product = new Product();
+            product.setSku(request.getSkuNumber());
+            product.setName(vendorProduct.productName());
+            productRepository.save(product);
+        }
 
         CatalogItem item = catalogItemRepository.findBySkuNumber(request.getSkuNumber())
                 .orElse(null);

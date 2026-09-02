@@ -60,6 +60,18 @@ public class KafkaConfig {
         return TopicBuilder.name(KafkaTopics.ORDER_CANCELLED).partitions(1).replicas(1).build();
     }
 
+    /** Phase D6: this service both publishes and consumes purchase-order events -- it
+     * mock-fulfills its own purchase orders since no real vendor system exists. */
+    @Bean
+    public NewTopic purchaseOrderPlacedTopic() {
+        return TopicBuilder.name(KafkaTopics.PURCHASE_ORDER_PLACED).partitions(1).replicas(1).build();
+    }
+
+    @Bean
+    public NewTopic purchaseOrderFulfilledTopic() {
+        return TopicBuilder.name(KafkaTopics.PURCHASE_ORDER_FULFILLED).partitions(1).replicas(1).build();
+    }
+
     /**
      * The object-valued template, for publishing domain events as JSON.
      *

@@ -5,6 +5,8 @@ import com.demo.order_service.events.KafkaTopics;
 import com.demo.order_service.events.OrderCancelledEvent;
 import com.demo.order_service.events.OrderConfirmedEvent;
 import com.demo.order_service.events.OrderPlacedEvent;
+import com.demo.order_service.events.PurchaseOrderFulfilledEvent;
+import com.demo.order_service.events.PurchaseOrderPlacedEvent;
 import com.demo.order_service.models.OutboxEvent;
 import com.demo.order_service.repository.OutboxEventRepository;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -92,14 +94,42 @@ public class OutboxWriter {
         write(event.eventId(), orderId, KafkaTopics.ORDER_CANCELLED, event);
     }
 
+    /** Phase D6: admin places a stocking purchase order against a vendor for a sku. */
+    public void writePurchaseOrderPlaced(String purchaseOrderId, String vendorId,
+                                          String skuNumber, Integer quantity, String warehouseId) {
+
+        PurchaseOrderPlacedEvent event = new PurchaseOrderPlacedEvent(
+                UUID.randomUUID().toString(), purchaseOrderId, vendorId, skuNumber,
+                quantity, warehouseId, Instant.now());
+
+        write(event.eventId(), "PurchaseOrder", purchaseOrderId, KafkaTopics.PURCHASE_ORDER_PLACED, event);
+    }
+
+    /** The mock vendor fulfilling its own purchase order -- see
+     * {@code PurchaseOrderPlacedListener}, which publishes this immediately since no real
+     * vendor system exists to wait on. */
+    public void writePurchaseOrderFulfilled(String purchaseOrderId, String skuNumber,
+                                             Integer quantity, String warehouseId) {
+
+        PurchaseOrderFulfilledEvent event = new PurchaseOrderFulfilledEvent(
+                UUID.randomUUID().toString(), purchaseOrderId, skuNumber, quantity,
+                warehouseId, Instant.now());
+
+        write(event.eventId(), "PurchaseOrder", purchaseOrderId, KafkaTopics.PURCHASE_ORDER_FULFILLED, event);
+    }
+
     private void write(String eventId, String orderId, String topic, Object payload) {
+        write(eventId, "Order", orderId, topic, payload);
+    }
+
+    private void write(String eventId, String aggregateType, String aggregateId, String topic, Object payload) {
 
         OutboxEvent outboxEvent = new OutboxEvent(
-                eventId, "Order", orderId, topic, serialize(payload));
+                eventId, aggregateType, aggregateId, topic, serialize(payload));
         outboxEvent.setCorrelationId(MDC.get("correlationId"));
         outboxEventRepository.save(outboxEvent);
 
-        log.debug("Queued {} eventId={} for order {} in the outbox", topic, eventId, orderId);
+        log.debug("Queued {} eventId={} for {} {} in the outbox", topic, eventId, aggregateType, aggregateId);
     }
 
     private String serialize(Object event) {

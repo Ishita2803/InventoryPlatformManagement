@@ -62,6 +62,20 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(response);
     }
 
+    @ExceptionHandler(VendorSkuNotFoundException.class)
+    public ResponseEntity<Map<String, Object>> handleVendorSkuNotFound(
+            VendorSkuNotFoundException exception
+    ) {
+        return body(HttpStatus.NOT_FOUND, "VENDOR_SKU_NOT_FOUND", exception.getMessage());
+    }
+
+    @ExceptionHandler(PurchaseOrderNotFoundException.class)
+    public ResponseEntity<Map<String, Object>> handlePurchaseOrderNotFound(
+            PurchaseOrderNotFoundException exception
+    ) {
+        return body(HttpStatus.NOT_FOUND, "PURCHASE_ORDER_NOT_FOUND", exception.getMessage());
+    }
+
     @ExceptionHandler(IllegalArgumentException.class)
     public ResponseEntity<Map<String, Object>> handleIllegalArgument(
             IllegalArgumentException exception

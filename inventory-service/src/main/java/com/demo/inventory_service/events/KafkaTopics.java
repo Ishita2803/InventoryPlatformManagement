@@ -24,6 +24,10 @@ public final class KafkaTopics {
     public static final String ORDER_CONFIRMED = "order.confirmed";
     public static final String ORDER_CANCELLED = "order.cancelled";
 
+    /** Phase D6. Published by order-service once its mock vendor fulfills a purchase
+     * order; consumed here to increase stock in the target warehouse. */
+    public static final String PURCHASE_ORDER_FULFILLED = "purchase.order.fulfilled";
+
     private KafkaTopics() {
     }
 }

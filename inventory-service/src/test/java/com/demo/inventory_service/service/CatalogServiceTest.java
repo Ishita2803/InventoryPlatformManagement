@@ -4,6 +4,7 @@ import com.demo.inventory_service.client.VendorServiceClient;
 import com.demo.inventory_service.dto.SetSalePriceRequest;
 import com.demo.inventory_service.models.CatalogItem;
 import com.demo.inventory_service.repository.CatalogItemRepository;
+import com.demo.inventory_service.repository.ProductRepository;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -24,6 +25,9 @@ class CatalogServiceTest {
     private CatalogItemRepository catalogItemRepository;
 
     @Mock
+    private ProductRepository productRepository;
+
+    @Mock
     private VendorServiceClient vendorServiceClient;
 
     @InjectMocks
@@ -33,7 +37,8 @@ class CatalogServiceTest {
     void settingAPriceForANewSkuCreatesACatalogItemWithVendorDataDenormalized() {
 
         when(vendorServiceClient.getProductBySku("SKU-1"))
-                .thenReturn(new VendorServiceClient.VendorProduct("VENDOR-1", new BigDecimal("1.500")));
+                .thenReturn(new VendorServiceClient.VendorProduct("VENDOR-1", "Widget", new BigDecimal("1.500")));
+        when(productRepository.findBySku("SKU-1")).thenReturn(Optional.empty());
         when(catalogItemRepository.findBySkuNumber("SKU-1")).thenReturn(Optional.empty());
         when(catalogItemRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
@@ -54,7 +59,8 @@ class CatalogServiceTest {
         CatalogItem existing = new CatalogItem("SKU-1", "VENDOR-1", new BigDecimal("1.500"), new BigDecimal("60.00"));
 
         when(vendorServiceClient.getProductBySku("SKU-1"))
-                .thenReturn(new VendorServiceClient.VendorProduct("VENDOR-1", new BigDecimal("1.500")));
+                .thenReturn(new VendorServiceClient.VendorProduct("VENDOR-1", "Widget", new BigDecimal("1.500")));
+        when(productRepository.findBySku("SKU-1")).thenReturn(Optional.of(new com.demo.inventory_service.models.Product()));
         when(catalogItemRepository.findBySkuNumber("SKU-1")).thenReturn(Optional.of(existing));
         when(catalogItemRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 

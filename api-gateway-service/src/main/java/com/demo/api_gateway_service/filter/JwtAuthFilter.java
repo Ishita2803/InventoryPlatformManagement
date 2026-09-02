@@ -102,6 +102,13 @@ public class JwtAuthFilter extends OncePerRequestFilter {
         // only these two new admin mutations opt in.
         ROUTE_ROLES.put("POST /api/inventory/warehouses", Set.of("ADMIN"));
         ROUTE_ROLES.put("POST /api/inventory/catalog", Set.of("ADMIN"));
+
+        // Phase D6: purchase orders, folded into order-service. Only admin places a
+        // stocking order; controller-level logic scopes the GET to the caller's own
+        // vendorId for VENDOR, all rows for ADMIN (business-id comes from the JWT claim
+        // forwarded as X-User-Business-Id, never a client-supplied query param).
+        ROUTE_ROLES.put("POST /api/purchase-orders", Set.of("ADMIN"));
+        ROUTE_ROLES.put("GET /api/purchase-orders", Set.of("ADMIN", "VENDOR"));
     }
 
     private static final AntPathMatcher PATH_MATCHER = new AntPathMatcher();

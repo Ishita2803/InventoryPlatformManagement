@@ -24,6 +24,14 @@ public final class KafkaTopics {
     public static final String ORDER_CONFIRMED = "order.confirmed";
     public static final String ORDER_CANCELLED = "order.cancelled";
 
+    /**
+     * Phase D6. Admin stocking orders (and later, D7's auto-backorders and D9's direct
+     * orders) all funnel through these two topics -- placed, then (since no real vendor
+     * system exists to call) immediately, mock-fulfilled by this same service.
+     */
+    public static final String PURCHASE_ORDER_PLACED = "purchase.order.placed";
+    public static final String PURCHASE_ORDER_FULFILLED = "purchase.order.fulfilled";
+
     private KafkaTopics() {
     }
 }
