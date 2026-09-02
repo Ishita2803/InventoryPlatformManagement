@@ -975,6 +975,37 @@ not asserted from reading config.
 `.env.example`) is a small, separate task, deliberately deferred rather than rushed
 alongside everything else this phase touched.
 
+## Phase D2 — Vendor onboarding & products ✅ *(done 2026-09-02)*
+
+- [x] `vendor-service` (new): `Vendor` (server-minted UUID `vendorId`), `Product`
+      (vendor's own catalog: sku, description, unitWeight, costPrice — deliberately not
+      the same `Product` `inventory-service` already has, which has no business knowing
+      cost price). `vendor_db` is a second schema on the existing `inventory-mysql`
+      instance, not a fourth MySQL container.
+- [x] `POST /api/vendor/onboard` (ADMIN-only) creates the `Vendor` row and calls
+      auth-service's internal `/auth/credentials` to provision the vendor's login — two
+      services, two transactions, the same accepted dual-write reasoning as everywhere
+      else this pattern appears in Part D.
+- [x] Every product mutation scoped to the caller's own `vendorId`, taken from the
+      gateway-forwarded `X-User-Business-Id` header, never a client-supplied value.
+      Enforced twice: the gateway only allows `VENDOR` on `POST`/`PUT`/`DELETE`
+      `/api/vendor/products/**` (both `VENDOR` and `ADMIN` may `GET`), and
+      `ProductService.requireOwned` is the second line of defence.
+- [x] Gateway's `JwtAuthFilter` upgraded from exact-path to method-aware,
+      `AntPathMatcher`-based route matching — needed the moment a route had a path
+      variable (`/api/vendor/products/{id}`) and a method-dependent role set (GET open
+      to more roles than a mutation on the same path).
+- [x] Tracing wired in from day one via `spring-boot-starter-opentelemetry` — the
+      pattern D1 proved working, applied to a brand-new service without needing to
+      retrofit it later.
+
+**Exit:** met, verified live end to end: admin onboards a vendor → vendor logs in and
+creates a product → a *second* onboarded vendor's attempt to edit the first vendor's
+product correctly returns `403 FORBIDDEN` (`"Product 1 does not belong to vendor ..."`) →
+the second vendor's own product list is correctly empty → admin's product list correctly
+shows every vendor's catalog. Also verified: a `CUSTOMER`-role token gets `403` on the
+onboarding route, and no token at all gets `401`.
+
 ---
 
 ## Resume discipline

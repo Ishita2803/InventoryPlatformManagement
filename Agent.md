@@ -99,8 +99,9 @@ aggregator pom, so "build everything" means looping over modules.
 | `notification-service` | 8083 | Consumes both result topics, mock email. **No database** | yes | yes |
 | `payment-service` | 8084 | Mocked, synchronous, idempotent by orderId. **No database** | yes | yes |
 | `auth-service` (Part D) | 8085 | Login, JWT issuance, bcrypt hashing. `auth_db` | yes | yes |
+| `vendor-service` (Part D) | 8086 | Vendor onboarding, vendor's product catalog. `vendor_db` | yes | yes |
 | `otel-collector` (Part D) | 4317 (grpc) / 4318 (http) | Receives OTLP, exports to Cloud Trace via `googlecloud` exporter | n/a | yes |
-| MySQL | 3306 | **three** schemas on one instance (`order_db`, `auth_db`) + a second instance (`inventory_db`, 3307) | — | on the data VM |
+| MySQL | 3306 | **three** schemas on one instance (`order_db`, `auth_db`) + a second instance with **two** schemas (`inventory_db`, `vendor_db`, 3307) | — | on the data VM |
 | Kafka | 9092 in-network / **29092 on the host** | `order.placed`, `inventory.reserved`, `inventory.failed`, `order.confirmed`, `order.cancelled` | — | on the data VM |
 
 Note `discovery-service`'s application name is `discovery-server`, which does **not** match
@@ -603,6 +604,35 @@ A 200 with **empty** `propertySources` means the filename doesn't match
 ## 10. Change log
 
 Newest first. Add an entry for every meaningful change.
+
+### 2026-09-02 — Phase D2 complete: vendor-service, verified live end to end
+- **New `vendor-service`**: `Vendor` (server-minted UUID `vendorId`, same reasoning as
+  `Order.orderId` since Phase 2 — a cross-service identifier must not be an
+  auto-increment surrogate) and `Product` (vendor's own catalog: sku, description,
+  unitWeight, costPrice). Deliberately a *different* `Product` from inventory-service's
+  existing one — inventory-service has no business knowing what we pay a vendor.
+- **`POST /api/vendor/onboard`** (ADMIN-only) creates the vendor and calls
+  auth-service's `/auth/credentials` to provision the login in the same request —
+  an accepted, documented dual-write (two services, two transactions).
+- **Ownership enforced twice**: the gateway's route-role map restricts
+  `POST`/`PUT`/`DELETE` `/api/vendor/products/**` to `VENDOR` only (both `VENDOR` and
+  `ADMIN` may `GET`), and `ProductService.requireOwned` independently checks the
+  product actually belongs to the calling vendor's `businessId`.
+- **Gateway's `JwtAuthFilter` upgraded**: exact-path matching → method-aware
+  `AntPathMatcher` prefix matching (`ROUTE_ROLES` keys are now `"METHOD /pattern/**"`).
+  Needed the moment a real route had a path variable and GET needed a different
+  allowed-role set than the mutations on the same path.
+- **`vendor_db`** is a second schema on the *existing* `inventory-mysql` instance (not
+  `order-mysql`, to spread the two new Part D schemas across both existing MySQL
+  containers rather than piling both onto one).
+- **Verified live, not just unit-tested**: onboarded two real vendors through the public
+  gateway; the second vendor's attempt to edit the first's product returned a real
+  `403 FORBIDDEN` naming the product and vendor; the second vendor's own product list
+  was correctly empty; admin's list correctly showed both vendors' catalogs combined;
+  a `CUSTOMER`-role token got `403` on the onboarding route; no token at all got `401`.
+- CI built and deployed `vendor-service` on the first real pipeline run (the Deployment
+  manifest was applied manually *first*, since `kubectl set image` — what CI's deploy
+  step does — requires the Deployment to already exist; it cannot create one).
 
 ### 2026-09-03 — Phase D1 complete: tracing confirmed live, rolled out to every service
 - **The "tracing export still open" item from the entry below is resolved — it was a
