@@ -756,15 +756,42 @@ Standard-tier reserved IP must be told explicitly to match via
 `kubectl get svc ... -o yaml`) but has **no effect on provisioning** — a wrong annotation key
 that looks like it worked is worse than one that errors immediately.
 
-## Phase 17 — CI/CD to GKE
+## Phase 17 — CI/CD to GKE ✅ *(done 2026-09-02)*
 
-- [ ] Extend the Phase 10 workflow: build → push to Artifact Registry → `kubectl apply`
-- [ ] Authenticate with **Workload Identity Federation**, not a long-lived service-account
-      key. Never commit a key file.
-- [ ] Tag images with the git SHA, never `latest` — `latest` makes rollbacks guesswork
-- [ ] Document the rollback: `kubectl rollout undo`
+- [x] Extend the Phase 10 workflow: build → push to Artifact Registry → roll out to GKE.
+      New `deploy` job in `.github/workflows/ci.yml`, gated on `build` + `images` both
+      passing and the trigger being an actual push to `main` (never a PR). Matrix over the
+      6 deployed services (not `discovery-service`); each builds its own image, pushes it,
+      then `kubectl set image` + `kubectl rollout status` to fail loudly on a bad rollout
+      rather than leave one silently broken.
+- [x] Authenticate with **Workload Identity Federation**, not a long-lived service-account
+      key. GCP-side: a Workload Identity Pool + OIDC provider scoped to exactly this repo
+      (`assertion.repository == 'Ishita2803/InventoryPlatformManagement'`), a dedicated
+      `github-actions-deployer` service account with `artifactregistry.writer` +
+      `container.developer`, and one impersonation binding. No key file anywhere, ever.
+- [x] Tag images with the git SHA, never `latest` — every image this phase pushes is tagged
+      `${{ git rev-parse --short HEAD }}`.
+- [x] Document the rollback: `kubectl rollout undo deployment/<name>`, verified **live**
+      (not just asserted) on `payment-service` — rolled back one revision, confirmed the
+      image reverted, then rolled forward again to restore the latest build. One real wrinkle
+      worth knowing: `kubectl` warns that `rollout undo` doesn't update the
+      `kubectl.kubernetes.io/last-applied-configuration` annotation that `kubectl apply`
+      relies on, so a subsequent manual `kubectl apply -f deploy/k8s/<service>.yaml` may not
+      behave the way its committed image tag suggests — another instance of the same
+      already-documented trade-off (the git-committed manifest reflects the *last manually
+      applied* state, not necessarily live state; `kubectl get deployment -o yaml` is the
+      source of truth for what's actually running).
 
-**Exit:** a push to `main` lands in GKE with no manual step, and a rollback is one command.
+**Exit: met, 2026-09-02, both halves verified live.** Pushing this phase's own commits to
+`main` triggered two real CI runs. The first correctly deployed 4/6 services and correctly
+**failed** on `order-service`/`inventory-service` — not a bug, a true positive: both had
+0 container restarts (never crash-looping) but took longer than the initial 180s timeout to
+become `Ready`, because the matrix deploys all 6 services roughly concurrently and Phase 15
+had already found these `e2-medium` nodes have very little spare CPU headroom for that many
+simultaneous JVM cold starts. Bumped the timeout to 300s; the second run deployed all 6/6
+successfully with no manual step, confirmed by `kubectl get pods` (all `1/1 Running`,
+0 restarts) and a live request through the public gateway. Rollback confirmed separately, live,
+on `payment-service`.
 
 ## Phase 18 — Cost control and teardown
 

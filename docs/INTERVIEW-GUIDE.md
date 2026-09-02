@@ -647,7 +647,7 @@ not two.
 | Not built | Phase |
 |---|---|
 | README, ADRs, OpenAPI, **any throughput benchmark** | 11 |
-| TLS, CI/CD to GKE | 16–17 |
+| TLS | 16 |
 
 **One thing that is genuinely broken right now, and say so if the saga comes up:** three
 orders are permanently stuck at `INVENTORY_RESERVED` holding stock. The `processed_event` row
@@ -717,7 +717,24 @@ Frame as problems solved, not technologies used.
 > **14.7× throughput improvement** (8.1 → 119.4 orders/sec) from one durability setting, with
 > 1000 concurrent orders settling with zero oversell.
 
-**Do not yet write:** Kubernetes, GCP, deployment automation.
+> **Deployed to GKE with cost as a first-class constraint** — Spot node pool, MySQL and Kafka
+> on a single Compute Engine VM instead of Cloud SQL, secrets mounted from Secret Manager via
+> the CSI driver, and a teardown path that scales to near-zero between demos.
+
+> **Built a CI/CD pipeline to GKE authenticated with Workload Identity Federation** — no
+> service-account key file exists anywhere. Every push to `main` builds, tags with the git
+> SHA, and rolls out via `kubectl set image` + `kubectl rollout status`, so a bad image fails
+> the pipeline instead of leaving a silently broken deployment; a rollback is one command,
+> verified live.
+
+> **Rate-limited a newly public endpoint without adding infrastructure to satisfy a
+> library** — a hand-rolled, in-memory per-client-IP limiter instead of Spring Cloud
+> Gateway's Redis-backed one, since no Redis exists anywhere else in the stack. Found and
+> fixed a real bug live burst-testing found and unit tests could not: Kubernetes'
+> default `externalTrafficPolicy` masks the real client IP behind node-level SNAT.
+
+**Do not yet write:** TLS on the public endpoint, GitOps (the deployed manifest is not yet the
+single source of truth — `kubectl set image` updates the cluster directly).
 
 ---
 

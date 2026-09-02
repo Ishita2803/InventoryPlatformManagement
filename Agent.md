@@ -567,6 +567,52 @@ A 200 with **empty** `propertySources` means the filename doesn't match
 
 Newest first. Add an entry for every meaningful change.
 
+### 2026-09-02 — Phase 17 complete: CI/CD to GKE via Workload Identity Federation
+- **New `deploy` job** in `.github/workflows/ci.yml`, gated on `build` + `images` passing and
+  the trigger being a real push to `main` (`if: github.event_name == 'push' && github.ref ==
+  'refs/heads/main'`) — a PR never touches GCP. Matrix over the 6 deployed services
+  (`discovery-service` correctly absent, matching Phase 15). Each: builds its image, tags
+  with the **git SHA** (never `latest`), pushes to Artifact Registry, then
+  `kubectl set image` + `kubectl rollout status --timeout=300s` so a bad rollout fails the
+  CI job loudly instead of leaving a silently-broken deployment discovered later.
+- **Auth is Workload Identity Federation, no key file, ever.** GCP-side setup, mostly done in
+  the console: a Workload Identity Pool (`github-actions-pool`) with an OIDC provider
+  (`github-provider`, issuer `https://token.actions.githubusercontent.com`) whose attribute
+  condition restricts token exchange to exactly this repo
+  (`assertion.repository == 'Ishita2803/InventoryPlatformManagement'`); a dedicated service
+  account `github-actions-deployer` with `artifactregistry.writer` + `container.developer`;
+  one `add-iam-policy-binding` granting the pool's `principalSet` `roles/iam.workloadIdentityUser`
+  on that service account. **One console gotcha, worth knowing:** the provider creation
+  failed with *"The attribute condition must reference one of the provider's claims"* until
+  the Attribute Mapping table (`google.subject = assertion.sub`,
+  `attribute.repository = assertion.repository`) was confirmed saved *before* setting the
+  condition — the console validates the condition against already-declared mapped claims,
+  and doesn't clearly say so in the error.
+- **Verified with two real CI runs, not just "the YAML looks right."** First run: 4/6
+  services deployed; `order-service` and `inventory-service` failed at
+  `kubectl rollout status` with `timed out waiting for the condition`. Checked the cluster
+  directly rather than trusting the CI failure alone — both pods showed **0 restarts** (never
+  crash-looping) and were `1/1 Running` a few minutes later, past the 180s the CI step had
+  waited. Root cause: the matrix deploys all 6 services roughly concurrently, and Phase 15
+  had already established these `e2-medium` nodes have very little spare CPU headroom — 6
+  simultaneous JVM cold starts measurably slow each one down. Fixed by raising the timeout to
+  300s; the second run deployed 6/6 successfully, confirmed via `kubectl get pods` (all
+  `1/1 Running`, 0 restarts) and a live `curl` through the public gateway returning real data.
+- **Rollback verified live, not just documented.** `kubectl rollout undo deployment/payment-service`
+  reverted the image to the previous git-SHA tag; `kubectl rollout status` confirmed the
+  rollback completed; rolled forward again (`kubectl rollout undo` a second time) to restore
+  the latest build, confirmed via the deployment's image field and a live gateway health
+  check. **One real wrinkle surfaced by actually running it:** `kubectl` warns that
+  `rollout undo` doesn't update the `kubectl.kubernetes.io/last-applied-configuration`
+  annotation that `kubectl apply` maintains — a future manual `kubectl apply -f
+  deploy/k8s/<service>.yaml` may not behave the way its committed image tag suggests. Same
+  underlying trade-off documented in the previous Phase 16 entry (committed manifests reflect
+  the last *manually applied* state, not necessarily live state), now with a second concrete
+  case.
+- **Phase 17 done.** Both exit-criterion halves — "a push to `main` lands in GKE with no
+  manual step" and "a rollback is one command" — verified against the real pipeline and the
+  real cluster, not asserted from reading the workflow file.
+
 ### 2026-09-02 — Phase 16: rate-limiting shipped, and a real bug only the live LB could expose
 - **`RateLimitFilter`** (`api-gateway-service/filter/`): per-client-IP, fixed-window,
   in-memory (`ConcurrentHashMap<String, AtomicInteger>`), ordered right after
