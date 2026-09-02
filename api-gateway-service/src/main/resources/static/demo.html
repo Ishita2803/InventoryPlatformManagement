@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Order &amp; Inventory Platform — Live Demo</title>
+<style>
+  :root {
+    --bg: #0f1420;
+    --panel: #171d2b;
+    --panel-2: #1e2536;
+    --border: #2a3245;
+    --text: #e3e8f0;
+    --muted: #8a93a8;
+    --accent: #5b8cff;
+    --ok: #3ecf8e;
+    --fail: #ff6b6b;
+    --warn: #f0b429;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.5;
+  }
+  header {
+    padding: 28px 32px 16px;
+    border-bottom: 1px solid var(--border);
+  }
+  header h1 { margin: 0 0 6px; font-size: 22px; }
+  header p { margin: 0; color: var(--muted); font-size: 14px; }
+  main {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 24px 32px 64px;
+    display: grid;
+    gap: 28px;
+  }
+  section { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 20px 24px; }
+  h2 { margin: 0 0 4px; font-size: 16px; }
+  h2 small { color: var(--muted); font-weight: normal; font-size: 12px; margin-left: 8px; }
+  .sub { color: var(--muted); font-size: 13px; margin: 0 0 16px; }
+
+  /* Architecture */
+  .arch-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 20px; }
+  .svc { background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; font-size: 13px; }
+  .svc .name { font-weight: 600; }
+  .svc .port { color: var(--accent); font-size: 12px; }
+  .svc .role { color: var(--muted); font-size: 12px; margin-top: 2px; }
+  .svc.public { border-color: var(--accent); }
+  .flow { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 13px; margin: 10px 0; }
+  .step { background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; }
+  .step.terminal-ok { border-color: var(--ok); color: var(--ok); }
+  .step.terminal-fail { border-color: var(--fail); color: var(--fail); }
+  .arrow { color: var(--muted); }
+  .flow-label { color: var(--muted); font-size: 12px; width: 130px; flex: none; }
+
+  /* Demo form */
+  .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; margin-bottom: 14px; }
+  .field { display: flex; flex-direction: column; gap: 4px; }
+  .field label { font-size: 12px; color: var(--muted); }
+  input {
+    background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px;
+    color: var(--text); padding: 8px 10px; font-size: 13px; width: 140px;
+  }
+  button {
+    background: var(--accent); color: white; border: none; border-radius: 6px;
+    padding: 9px 16px; font-size: 13px; cursor: pointer; font-weight: 600;
+  }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  button.secondary { background: var(--panel-2); border: 1px solid var(--border); color: var(--text); }
+  button.danger { background: var(--panel-2); border: 1px solid var(--fail); color: var(--fail); }
+
+  .step-block { border-top: 1px solid var(--border); padding-top: 14px; margin-top: 14px; }
+  .step-block:first-of-type { border-top: none; margin-top: 0; padding-top: 0; }
+  .step-title { font-size: 13px; font-weight: 600; margin-bottom: 8px; }
+  .step-title .num {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 20px; height: 20px; border-radius: 50%; background: var(--accent);
+    color: white; font-size: 11px; margin-right: 8px;
+  }
+
+  .badge { display: inline-block; padding: 3px 9px; border-radius: 12px; font-size: 12px; font-weight: 600; }
+  .badge.PENDING, .badge.INVENTORY_RESERVED { background: rgba(240,180,41,.15); color: var(--warn); }
+  .badge.CONFIRMED { background: rgba(62,207,142,.15); color: var(--ok); }
+  .badge.INVENTORY_FAILED, .badge.CANCELLED { background: rgba(255,107,107,.15); color: var(--fail); }
+
+  #timeline { list-style: none; padding: 0; margin: 12px 0 0; font-size: 13px; }
+  #timeline li { padding: 6px 0; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; gap: 12px; }
+  #timeline li:last-child { border-bottom: none; }
+  .ts { color: var(--muted); font-size: 11px; }
+
+  pre {
+    background: #0a0e17; border: 1px solid var(--border); border-radius: 6px;
+    padding: 12px; font-size: 12px; overflow-x: auto; max-height: 220px;
+    color: #9fb3d1; margin: 0;
+  }
+  .log-title { font-size: 12px; color: var(--muted); margin: 16px 0 6px; }
+  .msg { font-size: 13px; margin-top: 8px; }
+  .msg.error { color: var(--fail); }
+  .msg.ok { color: var(--ok); }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Fault-Tolerant Order Fulfillment Platform</h1>
+  <p>Live against the deployed GKE cluster through this gateway — no mock data. Place an order below and watch it move through real services.</p>
+</header>
+
+<main>
+
+  <section>
+    <h2>Architecture <small>6 services, event-driven, one public entry point</small></h2>
+    <p class="sub">Everything below goes through this gateway on <code>/api/**</code>. Only the gateway is reachable from outside the cluster.</p>
+
+    <div class="arch-grid">
+      <div class="svc public"><div class="name">api-gateway-service</div><div class="port">:8080 · public</div><div class="role">Single entry point, correlation IDs, rate limiting</div></div>
+      <div class="svc"><div class="name">order-service</div><div class="port">:8081</div><div class="role">Order lifecycle, transactional outbox, saga</div></div>
+      <div class="svc"><div class="name">inventory-service</div><div class="port">:8082</div><div class="role">Stock, reservations, optimistic locking</div></div>
+      <div class="svc"><div class="name">notification-service</div><div class="port">:8083</div><div class="role">Mock email on order outcome, no database</div></div>
+      <div class="svc"><div class="name">payment-service</div><div class="port">:8084</div><div class="role">Mocked, idempotent, behind Resilience4j</div></div>
+      <div class="svc"><div class="name">config-service</div><div class="port">:8888</div><div class="role">Git-backed configuration for all of the above</div></div>
+    </div>
+
+    <div class="flow">
+      <span class="flow-label">Happy path</span>
+      <span class="step">POST /api/orders</span><span class="arrow">→</span>
+      <span class="step">PENDING</span><span class="arrow">→</span>
+      <span class="step">Kafka: order.placed</span><span class="arrow">→</span>
+      <span class="step">stock reserved</span><span class="arrow">→</span>
+      <span class="step">payment approved</span><span class="arrow">→</span>
+      <span class="step terminal-ok">CONFIRMED</span>
+    </div>
+    <div class="flow">
+      <span class="flow-label">Out-of-stock</span>
+      <span class="step">POST /api/orders</span><span class="arrow">→</span>
+      <span class="step">PENDING</span><span class="arrow">→</span>
+      <span class="step">Kafka: order.placed</span><span class="arrow">→</span>
+      <span class="step">insufficient stock</span><span class="arrow">→</span>
+      <span class="step terminal-fail">INVENTORY_FAILED</span>
+    </div>
+    <div class="flow">
+      <span class="flow-label">Payment declined</span>
+      <span class="step">INVENTORY_RESERVED</span><span class="arrow">→</span>
+      <span class="step">payment call fails</span><span class="arrow">→</span>
+      <span class="step">stock released (compensation)</span><span class="arrow">→</span>
+      <span class="step terminal-fail">CANCELLED</span>
+    </div>
+  </section>
+
+  <section>
+    <h2>Live demo <small>runs against the real cluster</small></h2>
+    <p class="sub">Three steps: create a product, give it stock in a warehouse, then place an order. The status panel polls the real order until it reaches a terminal state.</p>
+
+    <div class="step-block">
+      <div class="step-title"><span class="num">1</span>Create a product</div>
+      <div class="row">
+        <div class="field"><label>Name</label><input id="prodName" value="Demo Widget"></div>
+        <button onclick="createProduct()">Create product</button>
+        <span id="prodResult" class="msg"></span>
+      </div>
+    </div>
+
+    <div class="step-block">
+      <div class="step-title"><span class="num">2</span>Add stock</div>
+      <div class="row">
+        <div class="field"><label>Product ID</label><input id="invProductId" placeholder="from step 1"></div>
+        <div class="field"><label>Warehouse ID</label><input id="invWarehouse" value="1"></div>
+        <div class="field"><label>Quantity</label><input id="invQty" value="10" type="number"></div>
+        <button onclick="addInventory()">Add stock</button>
+        <span id="invResult" class="msg"></span>
+      </div>
+    </div>
+
+    <div class="step-block">
+      <div class="step-title"><span class="num">3</span>Place an order</div>
+      <div class="row">
+        <div class="field"><label>Customer ID</label><input id="custId" value="demo-customer"></div>
+        <div class="field"><label>Product ID</label><input id="orderProductId" placeholder="from step 1"></div>
+        <div class="field"><label>Warehouse ID</label><input id="orderWarehouse" value="1"></div>
+        <div class="field"><label>Quantity to order</label><input id="orderQty" value="2" type="number"></div>
+        <div class="field"><label>Unit price</label><input id="orderPrice" value="9.99"></div>
+        <button onclick="placeOrder()">Place order</button>
+        <button class="danger" onclick="placeOrder(true)">Place order for MORE than in stock</button>
+      </div>
+      <div id="orderMsg" class="msg"></div>
+
+      <div id="statusPanel" style="display:none; margin-top:14px;">
+        <div>Order <code id="orderIdShown"></code> — <span id="statusBadge" class="badge"></span></div>
+        <ul id="timeline"></ul>
+      </div>
+    </div>
+
+    <div class="log-title">Last request / response</div>
+    <pre id="log">Nothing sent yet.</pre>
+  </section>
+
+</main>
+
+<script>
+  const API = ''; // same-origin: this page is served by api-gateway-service itself
+
+  function log(label, req, res) {
+    document.getElementById('log').textContent =
+      `${label}\n\n--> ${JSON.stringify(req, null, 2)}\n\n<-- ${JSON.stringify(res, null, 2)}`;
+  }
+
+  async function callApi(method, path, body) {
+    const res = await fetch(API + path, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: body ? JSON.stringify(body) : undefined
+    });
+    const text = await res.text();
+    let json;
+    try { json = JSON.parse(text); } catch (e) { json = text; }
+    log(`${method} ${path}`, body || {}, json);
+    if (!res.ok) throw { status: res.status, body: json };
+    return json;
+  }
+
+  async function createProduct() {
+    const el = document.getElementById('prodResult');
+    el.className = 'msg'; el.textContent = 'Creating…';
+    try {
+      const sku = 'DEMO-' + Math.random().toString(36).slice(2, 8).toUpperCase();
+      const product = await callApi('POST', '/api/products', { sku, name: document.getElementById('prodName').value });
+      el.className = 'msg ok'; el.textContent = `Created product id=${product.id} (sku ${product.sku})`;
+      document.getElementById('invProductId').value = product.id;
+      document.getElementById('orderProductId').value = product.id;
+    } catch (e) {
+      el.className = 'msg error'; el.textContent = 'Failed: ' + (e.body?.message || e.status || e);
+    }
+  }
+
+  async function addInventory() {
+    const el = document.getElementById('invResult');
+    el.className = 'msg'; el.textContent = 'Adding…';
+    try {
+      const body = {
+        productId: Number(document.getElementById('invProductId').value),
+        warehouseId: document.getElementById('invWarehouse').value,
+        quantity: Number(document.getElementById('invQty').value)
+      };
+      const inv = await callApi('POST', '/api/inventory', body);
+      el.className = 'msg ok'; el.textContent = `Available: ${inv.availableQuantity}, reserved: ${inv.reservedQuantity}`;
+    } catch (e) {
+      el.className = 'msg error'; el.textContent = 'Failed: ' + (e.body?.message || e.status || e);
+    }
+  }
+
+  let pollHandle = null;
+
+  async function placeOrder(overStock) {
+    const msg = document.getElementById('orderMsg');
+    msg.className = 'msg'; msg.textContent = 'Placing order…';
+    if (pollHandle) clearInterval(pollHandle);
+
+    const qty = overStock ? Number(document.getElementById('orderQty').value) + 100000 : Number(document.getElementById('orderQty').value);
+
+    const body = {
+      customerId: document.getElementById('custId').value,
+      items: [{
+        productId: Number(document.getElementById('orderProductId').value),
+        warehouseId: document.getElementById('orderWarehouse').value,
+        quantity: qty,
+        unitPrice: Number(document.getElementById('orderPrice').value)
+      }]
+    };
+
+    try {
+      const order = await callApi('POST', '/api/orders', body);
+      msg.className = 'msg ok'; msg.textContent = `Order placed: ${order.orderId}`;
+
+      const panel = document.getElementById('statusPanel');
+      panel.style.display = 'block';
+      document.getElementById('orderIdShown').textContent = order.orderId;
+      document.getElementById('timeline').innerHTML = '';
+      setBadge(order.status);
+      addTimelineEntry(order.status);
+
+      let lastStatus = order.status;
+      const terminal = ['CONFIRMED', 'INVENTORY_FAILED', 'CANCELLED'];
+      pollHandle = setInterval(async () => {
+        try {
+          const current = await callApi('GET', `/api/orders/${order.orderId}`);
+          if (current.status !== lastStatus) {
+            lastStatus = current.status;
+            setBadge(current.status);
+            addTimelineEntry(current.status);
+          }
+          if (terminal.includes(current.status)) clearInterval(pollHandle);
+        } catch (e) { /* transient poll error, keep trying */ }
+      }, 1200);
+
+    } catch (e) {
+      msg.className = 'msg error'; msg.textContent = 'Failed: ' + (e.body?.message || JSON.stringify(e.body) || e.status);
+    }
+  }
+
+  function setBadge(status) {
+    const b = document.getElementById('statusBadge');
+    b.textContent = status;
+    b.className = 'badge ' + status;
+  }
+
+  function addTimelineEntry(status) {
+    const li = document.createElement('li');
+    const time = new Date().toLocaleTimeString();
+    li.innerHTML = `<span>${status}</span><span class="ts">${time}</span>`;
+    document.getElementById('timeline').appendChild(li);
+  }
+</script>
+
+</body>
+</html>
