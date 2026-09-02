@@ -733,6 +733,14 @@ Frame as problems solved, not technologies used.
 > fixed a real bug live burst-testing found and unit tests could not: Kubernetes'
 > default `externalTrafficPolicy` masks the real client IP behind node-level SNAT.
 
+> **Automated teardown between demos as a cost control, not an afterthought** —
+> `deploy/gcp/down.sh`/`up.sh` scale the GKE node pool to zero and stop the data VM (never
+> delete either, so no state is lost), cutting cost from ~$45/month always-on to ~$3/month.
+> Running the bring-up script for real surfaced a genuine bug it was written to catch:
+> the data VM's MySQL/Kafka containers had no `restart` policy, so stopping the VM silently
+> lost the whole stack on the next start — found by checking the live containers over SSH,
+> not by assuming the script worked because it exited 0.
+
 **Do not yet write:** TLS on the public endpoint, GitOps (the deployed manifest is not yet the
 single source of truth — `kubectl set image` updates the cluster directly).
 

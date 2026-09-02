@@ -793,18 +793,36 @@ successfully with no manual step, confirmed by `kubectl get pods` (all `1/1 Runn
 0 restarts) and a live request through the public gateway. Rollback confirmed separately, live,
 on `payment-service`.
 
-## Phase 18 — Cost control and teardown
+## Phase 18 — Cost control and teardown ✅ *(done 2026-09-02)*
 
 The phase that decides whether this project costs $3/month or $45/month.
 
-- [ ] `deploy/gcp/up.sh` and `down.sh` — recreate/delete the cluster, stop/start the VM
-- [ ] Scale the node pool to zero when idle; **stop** (not delete) the data VM so its disks
+- [x] `deploy/gcp/up.sh` and `down.sh` — **scale/stop, not recreate/delete.** `down.sh`
+      disables node-pool autoscaling (min-nodes=1 would fight a resize to zero), resizes
+      `default-pool` to 0, and stops (not deletes) `order-platform-data-vm`. `up.sh` starts
+      the VM, resizes the pool back to 4 nodes (the count Phase 15 found necessary for all
+      6 pods to schedule immediately without waiting on the autoscaler), re-enables
+      autoscaling (min 1 / max 4), waits for MySQL to accept TCP connections, then waits for
+      all 6 deployments' `rollout status`.
+- [x] Scale the node pool to zero when idle; **stop** (not delete) the data VM so its disks
       and data survive
-- [ ] Verify the budget alert actually fires, using a throwaway $1 threshold
-- [ ] README section: exact cost, what is running, and how to bring it up for an interview
+- [x] Verify the budget alert actually fires. Created a throwaway budget
+      (`Phase18-Teardown-Test-DELETE-ME`, ₹1/month, 50%+100% thresholds) — since GCP
+      evaluates a budget against the *whole month's* spend, not from zero, this month's
+      already-accrued spend guarantees both thresholds are already crossed. **Honest limit
+      on this verification:** GCP evaluates budgets and sends the alert email on its own
+      periodic schedule, not on demand — there is no API to force or poll for delivery, and
+      confirming the email requires checking the billing account's inbox
+      (`ishitabhargava28@gmail.com`), which is outside this session. The mechanism and
+      trigger condition are confirmed correct; actual delivery is confirmed by Karthik
+      checking his email, not asserted here.
+- [x] README section: exact cost, what is running, and how to bring it up for an interview
 
-**Exit:** `down.sh` leaves nothing billable but the disks, and `up.sh` restores a working
-public URL from cold.
+**Exit: met, 2026-09-02, both halves run live, not just written.** `down.sh` was run for
+real: `gcloud compute instances list` showed `order-platform-data-vm` `TERMINATED`,
+`gcloud container clusters describe --format="value(currentNodeCount)"` returned empty
+(0 nodes), autoscaling showed `{}` (disabled). `up.sh` was then run for real and restored a
+working public URL from cold — see the Change log entry for the exact numbers.
 
 ---
 
@@ -820,6 +838,27 @@ phase most likely to differentiate the project for the roles being targeted.
 - [ ] Fixed-width record layout plus a parser with copybook-style field definitions
 - [ ] Spring Batch or a scheduled reader; reject-file handling for malformed records
 - [ ] Emits the same `OrderPlaced` event as the REST path, so both paths converge
+
+## Phase 20 — Demo UI ✅ *(done 2026-09-02)*
+
+A single static page so the platform can be demoed without a terminal in front of the
+interviewer.
+
+- [x] `api-gateway-service/src/main/resources/static/demo.html` — no build step, no
+      framework, served by the gateway itself at `/demo.html` (Spring Boot's default static
+      resource handler; the gateway's declared routes only match `/api/orders/**` and
+      `/api/products/**,/api/inventory/**`, so nothing conflicts). Calls `/api/**` on the same
+      origin — no CORS configuration needed.
+- [x] Two sections: a static architecture panel (6 services, happy/failure-path flow diagrams)
+      and a live demo (create a product, add stock, place an order, poll its status to a
+      terminal state, or deliberately over-order to trigger `INVENTORY_FAILED` live).
+- [x] Shipped through the real pipeline — committed, pushed to `main`, built and deployed by
+      the existing Phase 17 CI/CD job like any other change to this service, then verified
+      live at `http://35.208.57.189/demo.html`, not just locally.
+
+**Exit:** met. The page is reachable at the public gateway's `/demo.html`, placing an order
+through it reaches a real terminal state on the real cluster, and the deliberate
+over-order button reliably reaches `INVENTORY_FAILED`.
 
 ---
 

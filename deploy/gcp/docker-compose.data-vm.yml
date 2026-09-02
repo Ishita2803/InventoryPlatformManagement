@@ -8,6 +8,13 @@
 #   docker compose up -d
 #   docker compose ps
 #
+# `restart: unless-stopped` on every service is not decoration -- without it, a Phase 18
+# `up.sh` VM start does NOT bring these containers back. Stopping the VM (`down.sh`) cleanly
+# stops the containers too (exit code 0), and Docker only auto-starts a stopped container on
+# the next `dockerd` boot if the container's own restart policy says to -- discovered when
+# Phase 18's first live up.sh run left MySQL refusing connections for several minutes with no
+# obvious cause, traced by SSHing into the VM and finding all three containers `Exited (0)`.
+#
 # Differences from the root docker-compose.yml (local dev, Windows):
 #   - No application services -- GKE (Phase 15) runs those and reaches this VM over the
 #     network.
@@ -22,6 +29,7 @@ services:
   kafka:
     image: apache/kafka:3.9.0
     container_name: kafka
+    restart: unless-stopped
     ports:
       - "9092:9092"
     environment:
@@ -63,6 +71,7 @@ services:
   order-mysql:
     image: mysql:8.0
     container_name: order-mysql
+    restart: unless-stopped
     ports:
       - "3306:3306"
     environment:
@@ -92,6 +101,7 @@ services:
   inventory-mysql:
     image: mysql:8.0
     container_name: inventory-mysql
+    restart: unless-stopped
     ports:
       - "3307:3306"
     environment:

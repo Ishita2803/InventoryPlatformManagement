@@ -135,7 +135,10 @@ InventoryPlatformManagement/          <- git root
 └── payment-service/
 ```
 
-Planned but not yet created: `deploy/k8s/`, `deploy/gcp/`, `docs/decisions/`.
+`deploy/gcp/` holds the GCP-facing scripts: `00-bootstrap.sh` (Phase 12, one-time),
+`docker-compose.data-vm.yml` (Phase 13, the data VM's Kafka + 2× MySQL), and `up.sh`/`down.sh`
+(Phase 18, run before/after every session — see §7 and §10). `deploy/k8s/` holds the per-service
+`Deployment`/`Service` manifests (Phase 15).
 
 Java packages are `com.demo.<service_name>` with **underscores**
 (e.g. `com.demo.inventory_service`), not the `com.karthik.*` used in the source PDF.
@@ -537,6 +540,24 @@ esourcesin\docker.exe` or start a new shell.
     name.** `docker compose build` tags them `order-platform/order-service:latest`, so
     `docker tag order-service:latest ...` fails with *"No such image"*. Check `docker images`
     for the real local tag before pushing to Artifact Registry.
+49. **A Compose service with no `restart:` policy does not come back when its VM restarts.**
+    Stopping a GCE VM cleanly stops every container on it (`Exited (0)`, not a crash), and
+    Docker only revives a stopped container on the daemon's next boot if that container's own
+    restart policy says to. The default is to do nothing. `deploy/gcp/docker-compose.data-vm.yml`
+    ran for two days with no policy set before a real `down.sh`/`up.sh` cycle exposed it —
+    "the VM is running" and "the workload on it is running" are different claims, and only
+    stopping and starting the VM for real distinguishes them. Fixed with
+    `restart: unless-stopped` on all three services.
+50. **GKE node-pool autoscaling fights a resize to zero.** If `minNodeCount` is 1 (or any
+    nonzero value), `gcloud container clusters resize --num-nodes 0` gets silently undone —
+    the autoscaler's whole job is to maintain at least the minimum. No error; the node count
+    just doesn't drop. Disable autoscaling first (`--no-enable-autoscaling`), resize, then
+    re-enable it on the way back up.
+51. **The SSH user from OS Login does not own files created by a different account.** A `scp`
+    straight to `~/data-vm/docker-compose.yml` failed with "permission denied" because the
+    file was created (Phase 13) by a different Google account than the one OS Login mapped
+    this session to. `scp` to `/tmp`, then `sudo cp` into place — the standard workaround, not
+    specific to this project.
 
 ## 9. Startup order and verification (local)
 
@@ -566,6 +587,68 @@ A 200 with **empty** `propertySources` means the filename doesn't match
 ## 10. Change log
 
 Newest first. Add an entry for every meaningful change.
+
+### 2026-09-02 — Phase 20: a static demo page, served by the gateway itself
+- **`api-gateway-service/src/main/resources/static/demo.html`** — single static file, no
+  build step, no framework. Served automatically at `/demo.html` by Spring Boot's default
+  static-resource handler; the gateway's declared routes only match `/api/orders/**` and
+  `/api/products/**,/api/inventory/**`, so there's no collision to route around. Calls
+  `/api/**` on the same origin the page is served from, so no CORS configuration was needed.
+- Two sections: a static architecture panel (the 6 services, happy-path and both
+  failure-path flow diagrams) and a live demo — create a product, add stock, place a real
+  order, poll it to a terminal state, or deliberately over-order to trigger
+  `INVENTORY_FAILED` against the live cluster.
+- Shipped through the existing Phase 17 pipeline like any other change to this service —
+  commit, push to `main`, CI builds and rolls it out. No new infrastructure, no new
+  deployment path.
+
+### 2026-09-02 — Phase 18 complete: cost control and teardown, both scripts run live
+- **`deploy/gcp/down.sh` and `up.sh`** — scale/stop, never recreate/delete. `down.sh`
+  disables node-pool autoscaling (its `minNodeCount: 1` would otherwise fight a resize to
+  zero — GKE's autoscaler exists specifically to undo that), resizes `default-pool` to 0
+  nodes, and stops `order-platform-data-vm`. `up.sh` starts the VM, resizes the pool back to
+  4 (the count Phase 15 found necessary for all 6 pods to schedule without waiting on the
+  autoscaler), re-enables autoscaling (min 1 / max 4), waits for the data VM's MySQL to
+  accept a TCP connection, then waits on all 6 deployments' `rollout status`.
+- **Both scripts run for real against the live infrastructure**, not merely written and
+  assumed correct. `down.sh`: confirmed via `gcloud compute instances list` (VM
+  `TERMINATED`) and `gcloud container clusters describe --format="value(currentNodeCount)"`
+  (empty). `up.sh`: confirmed via a live `curl http://35.208.57.189/api/orders` returning
+  real order data with `200` after a full cold start.
+- **Real bug found only by running `up.sh` for real, not by reading it.** The first live
+  run left every service crash-looping on `Communications link failure` well past the
+  script's 90s MySQL-wait budget. SSHing into the data VM (`gcloud compute ssh ...
+  --tunnel-through-iap`) found all three containers (`kafka`, `order-mysql`,
+  `inventory-mysql`) sitting `Exited (0)` — **none had a `restart` policy**, so stopping the
+  VM stopped them for good; nothing about starting the VM ever re-runs `docker compose up`.
+  Fixed by adding `restart: unless-stopped` to all three services in
+  `deploy/gcp/docker-compose.data-vm.yml` and pushing the corrected file to the VM (via
+  `scp` to `/tmp` then `sudo cp` — OS Login's SSH user doesn't own the directory the
+  original file lived in). `docker compose up -d` recreated the containers to pick up the
+  new policy; the named volumes were untouched, so no data was lost. See §8 for the trap
+  entry.
+- **`inventory-service` needed one manual `kubectl delete pod`** after the data VM
+  recovered — its most recent crash-loop attempt (against the still-dead database) had
+  already pushed Kubernetes' exponential backoff several minutes out. Deleting the pod
+  forces an immediate retry instead of waiting out the backoff, which is what a person
+  present for a real bring-up would do. The other five pods (already mid-backoff on shorter
+  delays) recovered on their own once the VM was healthy.
+- **Budget alert: verified the trigger condition, not delivery — recorded as two different
+  claims.** Enabled the (previously-unused) Billing Budget API to confirm Phase 12's budget
+  (`Bill Alert`, ₹5650/month, 50/90/100% thresholds) exists via `gcloud billing budgets
+  list`. Created a throwaway budget (`Phase18-Teardown-Test-DELETE-ME`, ₹1/month) to force
+  an already-crossed threshold, since GCP evaluates a budget against the month's accrued
+  spend, not from zero. **What this does not prove:** GCP sends the alert email on its own
+  periodic schedule with no API to force or poll delivery, and confirming the email needs
+  the billing account's inbox (`ishitabhargava28@gmail.com`), outside this session's reach.
+  Recorded honestly in `plan.md` rather than asserted as fully verified.
+- **README gained a "Deployed to GCP" section** — cost table, the `up.sh`/`down.sh`
+  commands, and pointers to `plan.md`/`Agent.md`/`learn/` for the full detail. Corrected a
+  stale "no Kubernetes or cloud deployment yet" line in "What is not built" left over from
+  before Part B started, and added the two real remaining gaps (TLS, GitOps) in its place.
+- **Phase 18 done — Part B (Phases 12-18) is now fully complete**, every phase with a
+  running, live-verified exit criterion. Only Phase 19 (`legacy-adapter`, optional) remains
+  in `plan.md`.
 
 ### 2026-09-02 — Phase 17 complete: CI/CD to GKE via Workload Identity Federation
 - **New `deploy` job** in `.github/workflows/ci.yml`, gated on `build` + `images` passing and

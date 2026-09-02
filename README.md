@@ -25,6 +25,8 @@ Java 21 · Spring Boot 4.1 · Spring Cloud 2025.1 · Kafka (KRaft) · MySQL 8 ·
 - [Testing](#testing)
 - [Performance](#performance)
 - [Design decisions](#design-decisions)
+- [Live demo](#live-demo)
+- [Deployed to GCP](#deployed-to-gcp)
 - [What is not built](#what-is-not-built)
 
 ---
@@ -361,6 +363,41 @@ Longer narrative context lives in [`Agent.md`](Agent.md) (full project state, in
 numbered list of every trap hit along the way) and [`plan.md`](plan.md) (the phased plan).
 [`docs/INTERVIEW-GUIDE.md`](docs/INTERVIEW-GUIDE.md) explains the whole system end to end.
 
+## Live demo
+
+`/demo.html`, served by `api-gateway-service` itself — no build step, no framework, calls
+the real API on the same origin. Create a product, add stock, place an order, and watch it
+resolve to a real terminal state, or deliberately over-order to trigger `INVENTORY_FAILED`
+live. Also has a static architecture panel for narrating the six services and both failure
+paths without a terminal open.
+
+## Deployed to GCP
+
+The whole platform also runs on GKE — a zonal cluster with Spot `e2-medium` nodes, MySQL and
+Kafka on a single Compute Engine VM instead of Cloud SQL, secrets read from Secret Manager,
+and CI/CD to `main` authenticated with Workload Identity Federation (no service-account key
+file exists anywhere). Only the gateway is public.
+
+**It is torn down between demos, not left running.** `deploy/gcp/down.sh` scales the GKE
+node pool to zero and stops (never deletes) the data VM, which leaves nothing billable but
+disks and the reserved static IP. `deploy/gcp/up.sh` reverses it — starts the VM, resizes the
+pool back up, waits for MySQL/Kafka to accept connections, then waits for all six
+`Deployment`s to report `Ready` — and restores a working public URL from cold in a few
+minutes, both scripts run for real, not just written and assumed to work.
+
+| | Always on | Torn down between demos |
+|---|---|---|
+| Approx. cost | ~$45/month | ~$3/month (disks + reserved IP only) |
+
+```bash
+./deploy/gcp/down.sh   # end of a session
+./deploy/gcp/up.sh     # before a demo/interview
+```
+
+Full cost breakdown and the GCP-specific traps (Workload Identity, the GKE-managed CSI
+driver's RBAC gap, `externalTrafficPolicy`, node CPU headroom) are in `plan.md` Part B and
+`Agent.md` §8; a narrative walkthrough of each phase is in `learn/13` through `learn/19`.
+
 ## What is not built
 
 Listed deliberately, because a portfolio project that claims everything is worth nothing.
@@ -372,8 +409,11 @@ Listed deliberately, because a portfolio project that claims everything is worth
   dead-lettered 9 confirmations during benchmarking. Reconciliation recovers them, but not
   having to is better.
 - **No authentication or authorisation.** Every endpoint is open.
-- **No Kubernetes or cloud deployment yet.** Compose only. GKE, Secret Manager and a MySQL VM
-  are planned in `plan.md` Part B.
+- **TLS on the public gateway.** Skipped by deliberate choice for a portfolio demo reached by
+  a raw IP, not an oversight — see `plan.md` Phase 16.
+- **GitOps.** `deploy/k8s/*.yaml` is not the sole source of truth for what's running — CI does
+  `kubectl set image` directly against the cluster. Argo CD/Flux reconciling the manifest is
+  the more complete answer, deliberately deferred to keep one moving part instead of three.
 - **One partition per topic**, so consumers cannot currently scale out. Partitioning by
   `orderId` would preserve per-order ordering while allowing parallelism.
 - **No distributed tracing.** Correlation IDs are generated and propagated at the gateway,
