@@ -607,6 +607,32 @@ A 200 with **empty** `propertySources` means the filename doesn't match
 
 Newest first. Add an entry for every meaningful change.
 
+### 2026-09-02 — Phase D5 complete: warehouses & catalog pricing, added to inventory-service
+- **`Warehouse`** (warehouseId, location, **region**) added to `inventory-service` —
+  registered separately from `Inventory.warehouseId`, which has been a bare, unvalidated
+  `String` since Phase 1. Adding this table does NOT retrofit a foreign key onto existing
+  stock rows; Part A/B tests and demo data keep working unchanged. `region` is the field
+  Phase D7's fulfillment search will match against a customer address's own region
+  (Phase D3).
+- **`CatalogItem`** (sku → **salePrice**, `vendorId`/`unitWeight` denormalized from
+  vendor-service) — deliberately a different price from vendor-service's own
+  `Product.costPrice`. What we pay the vendor and what we charge the customer are two
+  different actors' decisions, so they live in two different services.
+- **New `VendorServiceClient`** in `inventory-service` — the synchronous, internal,
+  never-through-the-gateway call `CatalogService` makes when admin sets a sale price,
+  fetching the sku's owning vendor and unit weight. Same shape as order-service's
+  `PaymentClient`; no circuit breaker, since this call happens on price-setting (rare),
+  not on every order the way payment's call does.
+- Both mutation endpoints (`POST /api/inventory/warehouses`, `POST /api/inventory/catalog`)
+  gated ADMIN-only at the gateway; every existing `/api/inventory/**`/`/api/products/**`
+  route is untouched.
+- **Verified live**: registered a warehouse with a region; set a sale price for a real
+  vendor sku (auto-fetched vendor id + unit weight); re-setting the same sku updates the
+  existing row rather than duplicating it; a sku unknown to any vendor returns
+  `404 VENDOR_SKU_NOT_FOUND`. Full existing `inventory-service` test suite (Testcontainers
+  MySQL ITs, Kafka ITs, concurrency tests) re-run and still green after the new entities
+  and exception handlers were added to the existing `GlobalExceptionHandler`.
+
 ### 2026-09-02 — Phase D4 complete: carrier-service, and building the D8 lookup before D8 needs it
 - **New `carrier-service`**: `Carrier` — **admin-supplied** `carrierCode`
   ("BLUEDART", "DTDC"), deliberately not server-minted like `Vendor.vendorId`/

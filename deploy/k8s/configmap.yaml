@@ -21,4 +21,5 @@ data:
   CARRIER_DB_URL: "jdbc:mysql://10.128.0.2:3307/carrier_db"
   PAYMENT_BASE_URL: "http://payment-service:8084"
   AUTH_BASE_URL: "http://auth-service:8085"
+  VENDOR_BASE_URL: "http://vendor-service:8086"
   SPRING_PROFILES_ACTIVE: "k8s"

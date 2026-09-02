@@ -100,6 +100,34 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(response);
     }
 
+    @ExceptionHandler(WarehouseNotFoundException.class)
+    public ResponseEntity<Map<String, Object>> handleWarehouseNotFound(
+            WarehouseNotFoundException exception
+    ) {
+        return body(HttpStatus.NOT_FOUND, "WAREHOUSE_NOT_FOUND", exception.getMessage());
+    }
+
+    @ExceptionHandler(DuplicateWarehouseIdException.class)
+    public ResponseEntity<Map<String, Object>> handleDuplicateWarehouseId(
+            DuplicateWarehouseIdException exception
+    ) {
+        return body(HttpStatus.CONFLICT, "DUPLICATE_WAREHOUSE_ID", exception.getMessage());
+    }
+
+    @ExceptionHandler(CatalogItemNotFoundException.class)
+    public ResponseEntity<Map<String, Object>> handleCatalogItemNotFound(
+            CatalogItemNotFoundException exception
+    ) {
+        return body(HttpStatus.NOT_FOUND, "CATALOG_ITEM_NOT_FOUND", exception.getMessage());
+    }
+
+    @ExceptionHandler(VendorSkuNotFoundException.class)
+    public ResponseEntity<Map<String, Object>> handleVendorSkuNotFound(
+            VendorSkuNotFoundException exception
+    ) {
+        return body(HttpStatus.NOT_FOUND, "VENDOR_SKU_NOT_FOUND", exception.getMessage());
+    }
+
     @ExceptionHandler(IllegalArgumentException.class)
     public ResponseEntity<Map<String, Object>> handleIllegalArgument(
             IllegalArgumentException exception

@@ -1059,6 +1059,33 @@ weight and the heaviest tier for anything over the top, confirmed a `CUSTOMER` t
 read the carrier's public details (tiers included) but cannot add or remove a tier, and a
 different carrier's token cannot see or modify the first carrier's tiers.
 
+## Phase D5 — Warehouses & catalog pricing ✅ *(done 2026-09-02)*
+
+- [x] `Warehouse` (warehouseId, location, **region**) added to `inventory-service` —
+      registered separately from `Inventory.warehouseId` (a bare, unvalidated `String`
+      since Phase 1), so existing stock rows and Part A/B tests keep working unchanged.
+      `region` is what Phase D7's fulfillment search will match against a customer
+      address's own region.
+- [x] `CatalogItem` (sku → **salePrice**, plus `vendorId`/`unitWeight` denormalized from
+      vendor-service) — deliberately a different price from vendor-service's
+      `Product.costPrice`: what we pay the vendor and what we charge the customer are two
+      different actors' decisions.
+- [x] `VendorServiceClient` (new, in `inventory-service`) — the synchronous, internal,
+      never-through-the-gateway call `CatalogService` makes at the moment admin sets a
+      sale price, to fetch the sku's owning vendor and unit weight. Same shape as
+      `PaymentClient`, no circuit breaker (this call is rare — price-setting, not every
+      order — unlike payment's per-order call).
+- [x] Both mutation endpoints (`POST /api/inventory/warehouses`,
+      `POST /api/inventory/catalog`) are ADMIN-only at the gateway; the existing
+      `/api/inventory/**`/`/api/products/**` routes are untouched and stay exactly as
+      open as before — opt-in gating, same rule every Part D phase has followed.
+
+**Exit:** met, verified live: registered a warehouse with a region; set a sale price for
+a real vendor sku (fetched vendor id + unit weight from vendor-service automatically);
+re-setting the same sku's price updates the existing row rather than creating a second
+one; setting a price for a sku that doesn't exist at any vendor returns
+`404 VENDOR_SKU_NOT_FOUND`.
+
 ---
 
 ## Resume discipline

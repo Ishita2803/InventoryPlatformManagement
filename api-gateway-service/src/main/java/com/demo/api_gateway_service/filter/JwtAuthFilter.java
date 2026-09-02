@@ -96,6 +96,12 @@ public class JwtAuthFilter extends OncePerRequestFilter {
         ROUTE_ROLES.put("POST /api/carrier/weight-restrictions/**", Set.of("CARRIER"));
         ROUTE_ROLES.put("GET /api/carrier/weight-restrictions/**", Set.of("CARRIER"));
         ROUTE_ROLES.put("DELETE /api/carrier/weight-restrictions/**", Set.of("CARRIER"));
+
+        // Phase D5: warehouses and catalog pricing, added to inventory-service. Existing
+        // /api/inventory/** and /api/products/** routes are untouched and stay ungated --
+        // only these two new admin mutations opt in.
+        ROUTE_ROLES.put("POST /api/inventory/warehouses", Set.of("ADMIN"));
+        ROUTE_ROLES.put("POST /api/inventory/catalog", Set.of("ADMIN"));
     }
 
     private static final AntPathMatcher PATH_MATCHER = new AntPathMatcher();
