@@ -1,0 +1,63 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: carrier-service
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: carrier-service
+  template:
+    metadata:
+      labels:
+        app: carrier-service
+    spec:
+      serviceAccountName: order-platform-workload
+      containers:
+        - name: carrier-service
+          image: us-central1-docker.pkg.dev/inventorymanagement-507107/order-platform-repo/carrier-service:latest
+          ports:
+            - containerPort: 8088
+          envFrom:
+            - configMapRef:
+                name: platform-config
+          env:
+            - name: MYSQL_USER
+              value: "carrier_app"
+            - name: MYSQL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: impulse-secrets
+                  key: carrier-db-password
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "50m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+          readinessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8088
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8088
+            initialDelaySeconds: 60
+            periodSeconds: 15
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: carrier-service
+  namespace: default
+spec:
+  selector:
+    app: carrier-service
+  ports:
+    - port: 8088
+      targetPort: 8088

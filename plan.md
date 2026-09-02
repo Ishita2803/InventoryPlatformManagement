@@ -1035,6 +1035,30 @@ authenticated `CUSTOMER`. Fixed with a more-specific gateway route-role entry
 broader `CUSTOMER`-allowed pattern so it wins) — internal service-to-service calls never
 go through the gateway anyway, so this doesn't affect Phase D7's actual use of the route.
 
+## Phase D4 — Carrier onboarding & weight restrictions ✅ *(done 2026-09-02)*
+
+- [x] `carrier-service` (new): `Carrier` (**admin-supplied** `carrierCode` — e.g.
+      "BLUEDART", "DTDC" — unlike `Vendor.vendorId`/`Customer.customerNo`, this is a
+      real-world mnemonic identifier the business already has, not one Impulse mints)
+      and `WeightTier` (upper weight limit → additional cost, ordered ascending).
+- [x] `WeightTierService.surchargeFor(carrierCode, weightKg)` — the lookup Phase D8's
+      invoicing will call: first tier the weight does not exceed, or the heaviest tier as
+      a ceiling if the weight exceeds every tier defined, or zero if the carrier has no
+      tiers configured at all. Written and unit-tested now, in D4, even though nothing
+      calls it yet — the same "prove the mechanism before the phase that depends on it"
+      discipline as Phase D1 wiring tracing in before any service needed it.
+- [x] `POST /api/carrier/onboard` (ADMIN-only), same dual-write shape as D2/D3.
+      `GET /api/carrier/carriers/{code}` open to **any authenticated role** (a customer
+      needs to see a carrier's tiers to choose one at order time) — the first Part D
+      route with an intentionally-broad, not narrowly-scoped, role set.
+- [x] `carrier_db` is a third schema on the existing `inventory-mysql` instance.
+
+**Exit:** met, verified live: onboarded a carrier, added three weight tiers
+(1kg→₹10, 5kg→₹25, 10kg→₹50), confirmed `surchargeFor` picks the right tier at a boundary
+weight and the heaviest tier for anything over the top, confirmed a `CUSTOMER` token can
+read the carrier's public details (tiers included) but cannot add or remove a tier, and a
+different carrier's token cannot see or modify the first carrier's tiers.
+
 ---
 
 ## Resume discipline

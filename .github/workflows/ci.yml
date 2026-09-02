@@ -43,6 +43,7 @@ jobs:
           - auth-service
           - vendor-service
           - customer-service
+          - carrier-service
 
     steps:
       - uses: actions/checkout@v4
@@ -132,6 +133,7 @@ jobs:
           - auth-service
           - vendor-service
           - customer-service
+          - carrier-service
 
     env:
       PROJECT_ID: inventorymanagement-507107

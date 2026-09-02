@@ -87,6 +87,15 @@ public class JwtAuthFilter extends OncePerRequestFilter {
         ROUTE_ROLES.put("GET /api/customer/end-users/by-end-user-id/**", Set.of("ADMIN"));
         ROUTE_ROLES.put("GET /api/customer/end-users/**", Set.of("CUSTOMER"));
         ROUTE_ROLES.put("DELETE /api/customer/end-users/**", Set.of("CUSTOMER"));
+
+        ROUTE_ROLES.put("POST /api/carrier/onboard", Set.of("ADMIN"));
+        ROUTE_ROLES.put("GET /api/carrier/carriers", Set.of("ADMIN"));
+        // Any authenticated role may look up one carrier's own details/tiers -- a
+        // customer needs to see a carrier's weight tiers to choose one at order time.
+        ROUTE_ROLES.put("GET /api/carrier/carriers/**", Set.of());
+        ROUTE_ROLES.put("POST /api/carrier/weight-restrictions/**", Set.of("CARRIER"));
+        ROUTE_ROLES.put("GET /api/carrier/weight-restrictions/**", Set.of("CARRIER"));
+        ROUTE_ROLES.put("DELETE /api/carrier/weight-restrictions/**", Set.of("CARRIER"));
     }
 
     private static final AntPathMatcher PATH_MATCHER = new AntPathMatcher();

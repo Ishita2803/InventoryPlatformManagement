@@ -101,8 +101,9 @@ aggregator pom, so "build everything" means looping over modules.
 | `auth-service` (Part D) | 8085 | Login, JWT issuance, bcrypt hashing. `auth_db` | yes | yes |
 | `vendor-service` (Part D) | 8086 | Vendor onboarding, vendor's product catalog. `vendor_db` | yes | yes |
 | `customer-service` (Part D) | 8087 | Customer onboarding, addresses, end users. `customer_db` | yes | yes |
+| `carrier-service` (Part D) | 8088 | Carrier onboarding, weight-tier surcharges. `carrier_db` | yes | yes |
 | `otel-collector` (Part D) | 4317 (grpc) / 4318 (http) | Receives OTLP, exports to Cloud Trace via `googlecloud` exporter | n/a | yes |
-| MySQL | 3306 | **three** schemas on one instance (`order_db`, `auth_db`, `customer_db`) + a second instance with **two** schemas (`inventory_db`, `vendor_db`, 3307) | — | on the data VM |
+| MySQL | 3306 | **three** schemas on one instance (`order_db`, `auth_db`, `customer_db`) + a second instance with **three** schemas (`inventory_db`, `vendor_db`, `carrier_db`, 3307) | — | on the data VM |
 | Kafka | 9092 in-network / **29092 on the host** | `order.placed`, `inventory.reserved`, `inventory.failed`, `order.confirmed`, `order.cancelled` | — | on the data VM |
 
 Note `discovery-service`'s application name is `discovery-server`, which does **not** match
@@ -605,6 +606,25 @@ A 200 with **empty** `propertySources` means the filename doesn't match
 ## 10. Change log
 
 Newest first. Add an entry for every meaningful change.
+
+### 2026-09-02 — Phase D4 complete: carrier-service, and building the D8 lookup before D8 needs it
+- **New `carrier-service`**: `Carrier` — **admin-supplied** `carrierCode`
+  ("BLUEDART", "DTDC"), deliberately not server-minted like `Vendor.vendorId`/
+  `Customer.customerNo`, because a carrier code is a real-world mnemonic the business
+  already has — and `WeightTier` (upper limit → additional cost, ordered ascending).
+- **`WeightTierService.surchargeFor(carrierCode, weightKg)`** written and unit-tested
+  now, even though nothing calls it yet — the lookup Phase D8's invoicing needs:
+  first tier the weight doesn't exceed, heaviest tier as a ceiling above that, zero for
+  an unconfigured carrier. Same "prove the mechanism before the phase that depends on
+  it" discipline as wiring tracing into every service in D1 before anything needed it.
+- `GET /api/carrier/carriers/{code}` is the first Part D route with a deliberately
+  *broad* role set (any authenticated role, not narrowly scoped) — a customer needs to
+  see a carrier's weight tiers to choose a carrier at order time.
+- `carrier_db` is a third schema on the existing `inventory-mysql` instance.
+- **Verified live**: onboarded a carrier, added 3 real weight tiers, confirmed
+  `surchargeFor` picks the right tier at an exact boundary and the heaviest tier above
+  the top, confirmed a `CUSTOMER` token can read but not mutate, and cross-carrier
+  tier mutation is blocked the same way cross-vendor product mutation was in D2.
 
 ### 2026-09-02 — Phase D3 complete: customer-service, a real access-control gap found and fixed
 - **New `customer-service`**: `Customer` (server-minted `customerNo`, default

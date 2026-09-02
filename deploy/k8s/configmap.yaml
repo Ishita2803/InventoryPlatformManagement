@@ -17,6 +17,8 @@ data:
   VENDOR_DB_URL: "jdbc:mysql://10.128.0.2:3307/vendor_db"
   # A third schema on the SAME instance as ORDER_DB_URL/AUTH_DB_URL (order-mysql).
   CUSTOMER_DB_URL: "jdbc:mysql://10.128.0.2:3306/customer_db"
+  # A third schema on the SAME instance as INVENTORY_DB_URL/VENDOR_DB_URL (inventory-mysql).
+  CARRIER_DB_URL: "jdbc:mysql://10.128.0.2:3307/carrier_db"
   PAYMENT_BASE_URL: "http://payment-service:8084"
   AUTH_BASE_URL: "http://auth-service:8085"
   SPRING_PROFILES_ACTIVE: "k8s"
