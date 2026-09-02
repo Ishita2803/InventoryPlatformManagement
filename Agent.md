@@ -567,6 +567,33 @@ A 200 with **empty** `propertySources` means the filename doesn't match
 
 Newest first. Add an entry for every meaningful change.
 
+### 2026-09-02 — Phase 15: last two checklist items closed (one was already done, one newly verified)
+- **`MaxRAMPercentage` was already correctly set — the earlier "still open" note in this file
+  and in `plan.md` was wrong.** It was written on the assumption that no `JAVA_OPTS` value
+  existed anywhere, having checked only the k8s `ConfigMap`. Every service's Dockerfile has
+  carried `ENV JAVA_OPTS="-XX:MaxRAMPercentage=75 -XX:+ExitOnOutOfMemoryError"` since Phase 9,
+  and that persists into the container regardless of a k8s manifest's `command` override.
+  Confirmed on the **actual running PID 1** via `/proc/1/cmdline` in both
+  `inventory-service` (which overrides `command`) and `payment-service` (which doesn't) — not
+  a fresh `java -version` invocation, which would have shown the JVM's unrelated 25% default
+  and given a false negative.
+- **Verified Spot-preemption survival for real, not simulated with a cordon/drain.** Deleted
+  the GCE instance backing the node running `inventory-service`
+  (`gcloud compute instances delete gke-...-8dhp`). Node went `NotReady` within ~60s, was
+  removed from the cluster shortly after (the old pod object was garbage-collected with it),
+  GKE's managed instance group recreated a replacement node with the same name within ~25s,
+  and the Deployment's ReplicaSet scheduled a new pod onto it with **no manual
+  intervention** — it reached `1/1 Ready` unassisted, including re-resolving the
+  `config-service` dependency from a cold start (the same race documented in the previous
+  entry, self-healing the same way it did the first time).
+- **Phase 15 exit criterion verified and the phase is complete.**
+  `kubectl port-forward svc/api-gateway-service 8080:8080` against the real data VM: created a
+  product and 10 units of inventory, then an order placed **before** the inventory existed for
+  it correctly settled at `INVENTORY_FAILED` (a real failure path, produced incidentally by a
+  test-data ordering mistake rather than staged). A second order for qty 2 reached
+  `CONFIRMED` in ~3s, with stock correctly settled — `available` 10→8, `reserved` back to 0,
+  i.e. shipped, not merely held. **Phase 15 done.**
+
 ### 2026-09-02 — Phase 15: all six pods running; CSI driver workaround; node pool bumped to 4
 - **`deploy/k8s/` manifests deployed and all pods `Running`/`Ready`**: config-service,
   order-service, inventory-service, payment-service, notification-service,

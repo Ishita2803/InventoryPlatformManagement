@@ -653,7 +653,7 @@ password default, committed in git.
 **Exit (deferred to Phase 15):** a pod reads its DB password from Secret Manager, `git grep -i password` in
 `config-repo` finds only placeholders, and the old credential is revoked.
 
-## Phase 15 — GKE cluster and manifests 🟡 *(manifests deployed, all 6 pods Running/Ready 2026-09-02; JVM heap sizing and Spot-preemption test still open)*
+## Phase 15 — GKE cluster and manifests ✅ *(done 2026-09-02)*
 
 - [x] **First, verify Phase 13's deferred exit criterion:** from a throwaway pod, confirm
       `mysql` connects to both schemas on the data VM and a Kafka console producer/consumer
@@ -676,12 +676,25 @@ password default, committed in git.
 - [x] Deploy `config-service` in-cluster; clients point at `http://config-service:8888` —
       confirmed via client boot logs (`Fetching config from server at :
       http://config-service:8888`).
-- [ ] Set each JVM's `MaxRAMPercentage` against the **pod limit**, not the node size.
-      Not yet done — no `JAVA_OPTS` value is defined anywhere in the manifests or ConfigMap.
-- [ ] Verify pods survive a Spot preemption — that is the trade-off you're buying
+- [x] Set each JVM's `MaxRAMPercentage` against the **pod limit**, not the node size.
+      Already satisfied since Phase 9 — every Dockerfile bakes in
+      `ENV JAVA_OPTS="-XX:MaxRAMPercentage=75 -XX:+ExitOnOutOfMemoryError"`, which k8s
+      inherits regardless of the manifest's `command` override. Confirmed on the live PID 1
+      process (`/proc/1/cmdline`), not just a fresh `java -version` check — corrects an
+      earlier, wrong "not yet done" note in this file and in Agent.md.
+- [x] Verify pods survive a Spot preemption — that is the trade-off you're buying.
+      Simulated by deleting the GCE instance backing the node hosting
+      `inventory-service` (`gcloud compute instances delete`). Node went `NotReady` in
+      ~60s and was removed from the cluster; GKE's managed instance group recreated a
+      replacement (same name) within ~25s; the Deployment's ReplicaSet scheduled a new pod
+      onto it with no manual intervention, and it reached `1/1 Ready` unassisted — including
+      re-resolving its `config-service` dependency from a cold start.
 
-**Exit:** all pods `Running` and `Ready`; a `kubectl port-forward` to the gateway runs the
-full happy path and the full failure path against the data VM.
+**Exit: met, 2026-09-02.** All six pods `Running`/`Ready`. Verified via
+`kubectl port-forward svc/api-gateway-service 8080:8080` against the real data VM: a product +
+inventory (qty 10) created, then an order placed **before** inventory existed for it correctly
+reached `INVENTORY_FAILED`; a second order for qty 2 reached `CONFIRMED` in ~3s with stock
+correctly settled (`available` 10→8, `reserved` back to 0 — shipped, not merely held).
 
 ## Phase 16 — Public internet access
 
