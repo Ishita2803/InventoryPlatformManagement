@@ -588,6 +588,43 @@ A 200 with **empty** `propertySources` means the filename doesn't match
 
 Newest first. Add an entry for every meaningful change.
 
+### 2026-09-02 — Phase 21: correlation-id log tracing across the whole event lifecycle
+- **The request/message trail, previously stopping at the gateway (documented gap since
+  Phase 7), now reaches every service.** New `CorrelationIdFilter` in `order-service` and
+  `payment-service` (mirroring the gateway's), plus MDC handling in every `@KafkaListener`
+  across `order-service`, `inventory-service`, and `notification-service`. Chose log
+  correlation over standing up ELK or Micrometer Tracing: GKE already ships every pod's
+  stdout to Cloud Logging via the `fluentbit-gke` addon (Phase 15), so the only missing
+  piece was getting one id to actually reach every log line — no new infrastructure needed,
+  which matters on a cluster Phase 15 already found has very little spare capacity.
+- **The hard part is that most of this platform talks over Kafka, not HTTP**, so the
+  gateway's existing header-forwarding trick doesn't reach past the first hop by itself.
+  Fixed by treating the correlation id as data that travels with the event, not just the
+  request: `OutboxEvent` gained a nullable `correlation_id` column, captured from MDC at
+  write time (`OutboxWriter`); `OutboxPublisher` attaches it as a Kafka record header
+  (`X-Correlation-Id`) when it finally drains the row to the broker, however much later that
+  is. Every downstream `@KafkaListener` (`InventoryResultListener`, `OrderPlacedListener`,
+  `OrderSettlementListener`, `InventoryEventListener`) takes it as an optional `@Header`
+  method parameter, puts it in its own MDC for the duration of processing, and — where it
+  publishes a further event (`OrderPlacedListener`) — attaches it to the outgoing record the
+  same way. `PaymentClient`'s one synchronous call forwards it as a plain HTTP header, so
+  `payment-service`'s own logs land in the same trail rather than being an island.
+- **`logging.pattern.level` added to `order-service.yaml`, `inventory-service.yaml`,
+  `notification-service.yaml`, and `payment-service.yaml`** in `config-repo`, matching the
+  gateway's existing format — without this, MDC holds the value but no log line ever prints
+  it, which would have looked like the feature worked while doing nothing.
+- **Deliberately not distributed tracing.** No spans, no latency waterfall, no automatic
+  per-hop timing — this is "one Cloud Logging query returns every service's line for one
+  request," not "see where the time went." Honest gap, recorded rather than implied away:
+  work with no live request behind it (a reconciliation sweep) has no correlation id to
+  carry, since there is no MDC context to capture one from.
+- Existing test suites re-run after the change: all four touched modules compile clean;
+  `./mvnw verify` passes everywhere except two Testcontainers-backed MySQL ITs that failed
+  only because local Docker Desktop wasn't running at the time (confirmed via `docker info`)
+  — unrelated to this change, and CI (which has Docker) is what actually gates this.
+  `InventoryEventListenerTest`'s two direct-invocation call sites updated for the listener
+  methods' new `@Header` parameter.
+
 ### 2026-09-02 — Phase 20: a static demo page, served by the gateway itself
 - **`api-gateway-service/src/main/resources/static/demo.html`** — single static file, no
   build step, no framework. Served automatically at `/demo.html` by Spring Boot's default

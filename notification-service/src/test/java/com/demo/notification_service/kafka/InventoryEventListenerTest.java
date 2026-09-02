@@ -34,7 +34,7 @@ class InventoryEventListenerTest {
     void reservedProducesConfirmation() {
 
         listener.onInventoryReserved(new InventoryReservedEvent(
-                UUID.randomUUID().toString(), ORDER_ID, Instant.now()));
+                UUID.randomUUID().toString(), ORDER_ID, Instant.now()), null);
 
         Notification sent = capture();
         assertThat(sent.kind()).isEqualTo(Notification.Kind.ORDER_CONFIRMED);
@@ -48,7 +48,7 @@ class InventoryEventListenerTest {
 
         listener.onInventoryFailed(new InventoryFailedEvent(
                 UUID.randomUUID().toString(), ORDER_ID,
-                "Insufficient inventory. Available=0, requested=2", Instant.now()));
+                "Insufficient inventory. Available=0, requested=2", Instant.now()), null);
 
         Notification sent = capture();
         assertThat(sent.kind()).isEqualTo(Notification.Kind.ORDER_FAILED);

@@ -93,6 +93,14 @@ public class OutboxEvent {
     @Column(name = "published_at")
     private Instant publishedAt;
 
+    /**
+     * The request/message id that caused this event, captured from MDC at write time.
+     * Nullable: work with no active correlation id (a reconciliation sweep, say) still
+     * writes a row, just without one to carry forward.
+     */
+    @Column(name = "correlation_id", length = 64, updatable = false)
+    private String correlationId;
+
     public OutboxEvent(String eventId, String aggregateType, String aggregateId,
                        String topic, String payload) {
         this.eventId = eventId;

@@ -416,7 +416,12 @@ Listed deliberately, because a portfolio project that claims everything is worth
   the more complete answer, deliberately deferred to keep one moving part instead of three.
 - **One partition per topic**, so consumers cannot currently scale out. Partitioning by
   `orderId` would preserve per-order ordering while allowing parallelism.
-- **No distributed tracing.** Correlation IDs are generated and propagated at the gateway,
-  but nothing collects them.
+- **No distributed tracing (no spans, no waterfall view).** What exists instead: one
+  correlation id, generated at the gateway, threaded through every Kafka message header and
+  every service's MDC (including the outbox — the id survives the gap between an HTTP
+  request finishing and its event being drained minutes later), landing in every pod's logs
+  in GKE's already-running Cloud Logging. Enough to pull the full lifecycle of one request
+  with a single log query; not Micrometer Tracing with a real backend, which is the
+  honest next step if this needs to go further.
 - **Payments are mocked.** A real provider brings 3-D Secure, webhooks, settlement delays and
   refunds — none of which are modelled.

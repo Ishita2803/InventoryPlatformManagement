@@ -4,6 +4,7 @@ import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
 import io.github.resilience4j.retry.annotation.Retry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
@@ -81,9 +82,20 @@ public class PaymentClient {
 
         log.info("Charging {} for order {}", amount, orderId);
 
+        String correlationId = MDC.get("correlationId");
+
         PaymentResponse response = restClient.post()
                 .uri("/api/payments")
                 .contentType(MediaType.APPLICATION_JSON)
+                // Same id this order's whole story has been logged under, so payment-service's
+                // own logs land in the same Cloud Logging search rather than an island of
+                // their own. Absent (no active MDC, e.g. a reconciliation-driven call) is fine
+                // -- the header is just omitted.
+                .headers(httpHeaders -> {
+                    if (correlationId != null) {
+                        httpHeaders.add("X-Correlation-Id", correlationId);
+                    }
+                })
                 // orderId is the idempotency key: the retry above means this request can
                 // legitimately arrive more than once, and the customer must be charged once.
                 .body(new PaymentRequest(orderId, amount))

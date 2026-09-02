@@ -6,7 +6,9 @@ import com.demo.inventory_service.events.OrderConfirmedEvent;
 import com.demo.inventory_service.service.InventoryService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.slf4j.MDC;
 import org.springframework.kafka.annotation.KafkaListener;
+import org.springframework.messaging.handler.annotation.Header;
 import org.springframework.stereotype.Component;
 
 /**
@@ -32,14 +34,23 @@ public class OrderSettlementListener {
 
     /** Payment succeeded: reserved stock leaves the warehouse and does not return. */
     @KafkaListener(topics = KafkaTopics.ORDER_CONFIRMED, groupId = "inventory-service")
-    public void onOrderConfirmed(OrderConfirmedEvent event) {
+    public void onOrderConfirmed(
+            OrderConfirmedEvent event,
+            @Header(name = "X-Correlation-Id", required = false) String correlationId) {
 
-        log.info("Received OrderConfirmed eventId={} orderId={} paymentId={}",
-                event.eventId(), event.orderId(), event.paymentId());
+        if (correlationId != null) {
+            MDC.put("correlationId", correlationId);
+        }
+        try {
+            log.info("Received OrderConfirmed eventId={} orderId={} paymentId={}",
+                    event.eventId(), event.orderId(), event.paymentId());
 
-        int confirmed = inventoryService.confirmReservation(event.orderId()).size();
+            int confirmed = inventoryService.confirmReservation(event.orderId()).size();
 
-        log.info("Confirmed {} reservation line(s) for order {}", confirmed, event.orderId());
+            log.info("Confirmed {} reservation line(s) for order {}", confirmed, event.orderId());
+        } finally {
+            MDC.remove("correlationId");
+        }
     }
 
     /**
@@ -47,14 +58,23 @@ public class OrderSettlementListener {
      * the stock back so it is not held for an order that will never complete.
      */
     @KafkaListener(topics = KafkaTopics.ORDER_CANCELLED, groupId = "inventory-service")
-    public void onOrderCancelled(OrderCancelledEvent event) {
+    public void onOrderCancelled(
+            OrderCancelledEvent event,
+            @Header(name = "X-Correlation-Id", required = false) String correlationId) {
 
-        log.info("Received OrderCancelled eventId={} orderId={} reason={}",
-                event.eventId(), event.orderId(), event.reason());
+        if (correlationId != null) {
+            MDC.put("correlationId", correlationId);
+        }
+        try {
+            log.info("Received OrderCancelled eventId={} orderId={} reason={}",
+                    event.eventId(), event.orderId(), event.reason());
 
-        int released = inventoryService.releaseInventory(event.orderId()).size();
+            int released = inventoryService.releaseInventory(event.orderId()).size();
 
-        log.info("Released {} reservation line(s) for order {} — compensation complete",
-                released, event.orderId());
+            log.info("Released {} reservation line(s) for order {} — compensation complete",
+                    released, event.orderId());
+        } finally {
+            MDC.remove("correlationId");
+        }
     }
 }

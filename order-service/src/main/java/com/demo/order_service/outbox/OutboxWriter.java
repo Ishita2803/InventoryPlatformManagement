@@ -11,6 +11,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.slf4j.MDC;
 import org.springframework.stereotype.Component;
 
 import java.time.Instant;
@@ -49,12 +50,14 @@ public class OutboxWriter {
                 lines,
                 Instant.now());
 
-        outboxEventRepository.save(new OutboxEvent(
+        OutboxEvent outboxEvent = new OutboxEvent(
                 event.eventId(),
                 "Order",
                 order.orderId(),          // Kafka key: one order, one partition, ordered
                 KafkaTopics.ORDER_PLACED,
-                serializeOrderPlaced(event)));
+                serializeOrderPlaced(event));
+        outboxEvent.setCorrelationId(MDC.get("correlationId"));
+        outboxEventRepository.save(outboxEvent);
 
         log.debug("Queued OrderPlaced eventId={} for order {} in the outbox",
                 event.eventId(), order.orderId());
@@ -91,8 +94,10 @@ public class OutboxWriter {
 
     private void write(String eventId, String orderId, String topic, Object payload) {
 
-        outboxEventRepository.save(new OutboxEvent(
-                eventId, "Order", orderId, topic, serialize(payload)));
+        OutboxEvent outboxEvent = new OutboxEvent(
+                eventId, "Order", orderId, topic, serialize(payload));
+        outboxEvent.setCorrelationId(MDC.get("correlationId"));
+        outboxEventRepository.save(outboxEvent);
 
         log.debug("Queued {} eventId={} for order {} in the outbox", topic, eventId, orderId);
     }

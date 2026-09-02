@@ -4,6 +4,10 @@ import com.demo.order_service.models.OutboxEvent;
 import com.demo.order_service.models.OutboxStatus;
 import com.demo.order_service.repository.OutboxEventRepository;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.kafka.clients.producer.ProducerRecord;
+import org.apache.kafka.common.header.Header;
+import org.apache.kafka.common.header.internals.RecordHeader;
+import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Limit;
@@ -12,6 +16,7 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
@@ -82,13 +87,26 @@ public class OutboxPublisher {
     }
 
     private void publish(OutboxEvent event) {
+        // So this row's own log lines -- and anything the correlationId header below
+        // causes downstream consumers to log -- can be found together in Cloud Logging,
+        // even though the HTTP request or Kafka message that wrote this row is long gone by
+        // the time the poller gets to it.
+        if (event.getCorrelationId() != null) {
+            MDC.put("correlationId", event.getCorrelationId());
+        }
         try {
+            List<Header> headers = event.getCorrelationId() == null
+                    ? List.of()
+                    : List.of(new RecordHeader("X-Correlation-Id",
+                            event.getCorrelationId().getBytes(StandardCharsets.UTF_8)));
+
+            ProducerRecord<String, String> record = new ProducerRecord<>(
+                    event.getTopic(), null, event.getAggregateId(), event.getPayload(), headers);
+
             // Blocking on the broker's acknowledgement is the point. Fire-and-forget would
             // let the row be marked PUBLISHED for a send that later failed, which loses the
             // event -- exactly what the outbox exists to prevent.
-            kafkaTemplate
-                    .send(event.getTopic(), event.getAggregateId(), event.getPayload())
-                    .get(sendTimeoutSeconds, TimeUnit.SECONDS);
+            kafkaTemplate.send(record).get(sendTimeoutSeconds, TimeUnit.SECONDS);
 
             event.markPublished();
 
@@ -112,6 +130,8 @@ public class OutboxPublisher {
                         event.getAttempts(), maxAttempts, event.getEventId(),
                         failure.toString());
             }
+        } finally {
+            MDC.remove("correlationId");
         }
         // No explicit save: the entity is managed inside this transaction, so the state
         // change is flushed on commit.

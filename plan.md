@@ -860,6 +860,38 @@ interviewer.
 through it reaches a real terminal state on the real cluster, and the deliberate
 over-order button reliably reaches `INVENTORY_FAILED`.
 
+## Phase 21 — Correlation-id log tracing across the event lifecycle ✅ *(done 2026-09-02)*
+
+Closes the gap documented since Phase 7: the gateway generated and forwarded a correlation
+id, but nothing downstream logged it, so the trail stopped at the gateway.
+
+- [x] `order-service` and `payment-service` gained their own `CorrelationIdFilter`
+      (mirroring the gateway's), for the synchronous HTTP hops.
+- [x] The harder part: most of this platform talks over Kafka, not HTTP. `OutboxEvent`
+      gained a nullable `correlation_id` column, captured from MDC when the row is written;
+      `OutboxPublisher` attaches it as an `X-Correlation-Id` Kafka header when it finally
+      drains the row. Every `@KafkaListener` (`InventoryResultListener`,
+      `OrderPlacedListener`, `OrderSettlementListener`, `InventoryEventListener`) reads it
+      back as an optional `@Header` parameter, puts it in its own MDC, and — where it
+      publishes a further event — carries it onto that outgoing record too.
+      `PaymentClient`'s one synchronous call forwards it as a plain HTTP header.
+- [x] `logging.pattern.level` added to all four remaining services in `config-repo`, matching
+      the gateway's existing format, so the MDC value actually prints rather than sitting
+      unused.
+- [x] Deliberately chose log correlation via GKE's already-running Cloud Logging pipeline
+      (`fluentbit-gke`, confirmed running since Phase 15) over standing up ELK or Micrometer
+      Tracing — zero new infrastructure, fits a cluster Phase 15 already found has very
+      little spare capacity. Not the same claim as distributed tracing: no spans, no latency
+      waterfall, and reconciliation-driven work (no live request behind it) has no id to
+      carry.
+
+**Exit:** met. All four touched modules (`order-service`, `inventory-service`,
+`notification-service`, `payment-service`) compile clean and pass their non-Docker-dependent
+tests; the two Testcontainers MySQL ITs that didn't run locally failed only because Docker
+Desktop wasn't running on this machine at the time, confirmed via `docker info` — unrelated
+to this change, and CI (which has Docker) is the real gate. Shipped through the same CI/CD
+pipeline as every other change to these services.
+
 ---
 
 ## Resume discipline

@@ -7,7 +7,9 @@ import com.demo.notification_service.notification.Notification;
 import com.demo.notification_service.notification.NotificationSender;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 import org.springframework.kafka.annotation.KafkaListener;
+import org.springframework.messaging.handler.annotation.Header;
 import org.springframework.stereotype.Component;
 
 /**
@@ -41,29 +43,47 @@ public class InventoryEventListener {
     }
 
     @KafkaListener(topics = KafkaTopics.INVENTORY_RESERVED, groupId = "notification-service")
-    public void onInventoryReserved(InventoryReservedEvent event) {
+    public void onInventoryReserved(
+            InventoryReservedEvent event,
+            @Header(name = "X-Correlation-Id", required = false) String correlationId) {
 
-        log.info("Received InventoryReserved eventId={} orderId={}",
-                event.eventId(), event.orderId());
+        if (correlationId != null) {
+            MDC.put("correlationId", correlationId);
+        }
+        try {
+            log.info("Received InventoryReserved eventId={} orderId={}",
+                    event.eventId(), event.orderId());
 
-        notificationSender.send(new Notification(
-                Notification.Kind.ORDER_CONFIRMED,
-                event.orderId(),
-                "Good news — we have reserved the stock for your order "
-                        + event.orderId() + " and it is being prepared."));
+            notificationSender.send(new Notification(
+                    Notification.Kind.ORDER_CONFIRMED,
+                    event.orderId(),
+                    "Good news — we have reserved the stock for your order "
+                            + event.orderId() + " and it is being prepared."));
+        } finally {
+            MDC.remove("correlationId");
+        }
     }
 
     @KafkaListener(topics = KafkaTopics.INVENTORY_FAILED, groupId = "notification-service")
-    public void onInventoryFailed(InventoryFailedEvent event) {
+    public void onInventoryFailed(
+            InventoryFailedEvent event,
+            @Header(name = "X-Correlation-Id", required = false) String correlationId) {
 
-        log.info("Received InventoryFailed eventId={} orderId={} reason={}",
-                event.eventId(), event.orderId(), event.reason());
+        if (correlationId != null) {
+            MDC.put("correlationId", correlationId);
+        }
+        try {
+            log.info("Received InventoryFailed eventId={} orderId={} reason={}",
+                    event.eventId(), event.orderId(), event.reason());
 
-        notificationSender.send(new Notification(
-                Notification.Kind.ORDER_FAILED,
-                event.orderId(),
-                "We were unable to fulfil your order " + event.orderId()
-                        + ". Reason: " + event.reason()
-                        + ". You have not been charged."));
+            notificationSender.send(new Notification(
+                    Notification.Kind.ORDER_FAILED,
+                    event.orderId(),
+                    "We were unable to fulfil your order " + event.orderId()
+                            + ". Reason: " + event.reason()
+                            + ". You have not been charged."));
+        } finally {
+            MDC.remove("correlationId");
+        }
     }
 }

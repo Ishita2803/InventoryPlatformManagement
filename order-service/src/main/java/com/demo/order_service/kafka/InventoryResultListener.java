@@ -10,7 +10,9 @@ import com.demo.order_service.service.OrderSettlementService;
 import com.demo.order_service.service.OrderTxService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.slf4j.MDC;
 import org.springframework.kafka.annotation.KafkaListener;
+import org.springframework.messaging.handler.annotation.Header;
 import org.springframework.stereotype.Component;
 
 /**
@@ -38,34 +40,59 @@ public class InventoryResultListener {
      * </ol>
      */
     @KafkaListener(topics = KafkaTopics.INVENTORY_RESERVED, groupId = "order-service")
-    public void onInventoryReserved(InventoryReservedEvent event) {
+    public void onInventoryReserved(
+            InventoryReservedEvent event,
+            @Header(name = "X-Correlation-Id", required = false) String correlationId) {
 
-        log.info("Received InventoryReserved eventId={} orderId={}",
-                event.eventId(), event.orderId());
+        withCorrelationId(correlationId, () -> {
+            log.info("Received InventoryReserved eventId={} orderId={}",
+                    event.eventId(), event.orderId());
 
-        boolean applied = apply(event.eventId(), "InventoryReserved", event.orderId(),
-                OrderStatus.INVENTORY_RESERVED);
+            boolean applied = apply(event.eventId(), "InventoryReserved", event.orderId(),
+                    OrderStatus.INVENTORY_RESERVED);
 
-        if (!applied) {
-            // Duplicate delivery: the first one already reserved and paid.
-            return;
-        }
+            if (!applied) {
+                // Duplicate delivery: the first one already reserved and paid.
+                return;
+            }
 
-        // Cancels if payment cannot be reached: a customer is waiting on this one, and
-        // holding stock for an order that cannot be charged helps nobody. The reconciliation
-        // job uses the other entry point, because by the time it runs nobody is waiting and
-        // an outage should not cancel a backlog.
-        orderSettlementService.settleCancellingOnOutage(event.orderId());
+            // Cancels if payment cannot be reached: a customer is waiting on this one, and
+            // holding stock for an order that cannot be charged helps nobody. The
+            // reconciliation job uses the other entry point, because by the time it runs
+            // nobody is waiting and an outage should not cancel a backlog.
+            orderSettlementService.settleCancellingOnOutage(event.orderId());
+        });
     }
 
     @KafkaListener(topics = KafkaTopics.INVENTORY_FAILED, groupId = "order-service")
-    public void onInventoryFailed(InventoryFailedEvent event) {
+    public void onInventoryFailed(
+            InventoryFailedEvent event,
+            @Header(name = "X-Correlation-Id", required = false) String correlationId) {
 
-        log.info("Received InventoryFailed eventId={} orderId={} reason={}",
-                event.eventId(), event.orderId(), event.reason());
+        withCorrelationId(correlationId, () -> {
+            log.info("Received InventoryFailed eventId={} orderId={} reason={}",
+                    event.eventId(), event.orderId(), event.reason());
 
-        // No payment attempt: there is nothing to pay for, and nothing reserved to release.
-        apply(event.eventId(), "InventoryFailed", event.orderId(), OrderStatus.INVENTORY_FAILED);
+            // No payment attempt: there is nothing to pay for, and nothing reserved to release.
+            apply(event.eventId(), "InventoryFailed", event.orderId(), OrderStatus.INVENTORY_FAILED);
+        });
+    }
+
+    /**
+     * Puts the id from the Kafka header into MDC for the duration of processing, so every
+     * log line here -- and every log line in {@code PaymentClient}'s synchronous call on
+     * this same thread -- carries the same id the gateway logged for the original HTTP
+     * request. Threads are pooled, so it must come back out afterwards.
+     */
+    private void withCorrelationId(String correlationId, Runnable work) {
+        if (correlationId != null) {
+            MDC.put("correlationId", correlationId);
+        }
+        try {
+            work.run();
+        } finally {
+            MDC.remove("correlationId");
+        }
     }
 
     /**

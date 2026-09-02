@@ -610,13 +610,20 @@ not two.
 > a profile.
 
 **"What does the correlation id actually buy you?"**
-> Without it a failed request is three unrelated log lines in three services. The gateway
-> honours an incoming `X-Correlation-Id` or mints one, puts it in the MDC so it appears on
-> every gateway log line, forwards it downstream, and returns it to the caller — so a
-> customer quoting an id is enough to find the request.
+> Without it a failed request is unrelated log lines in five services with no way to tell
+> they belong together. The gateway honours an incoming `X-Correlation-Id` or mints one and
+> forwards it downstream over HTTP; every other hop is Kafka, so the id travels as a message
+> header instead — attached when an outbox row is written, read back off the header by each
+> consumer, and put in that consumer's own MDC before it does anything else. The synchronous
+> payment call gets it as an HTTP header too. GKE already ships every pod's stdout to Cloud
+> Logging (the `fluentbit-gke` addon), so one log query for that id returns the whole
+> request's story: gateway, order-service, inventory-service, notification-service, and
+> payment-service, in order.
 >
-> *Be honest about the limit:* the downstream services receive it but don't yet log it, so
-> today the trail stops at the gateway. Micrometer Tracing in Phase 9 closes that.
+> *Be honest about the limit:* this is log correlation, not distributed tracing — no spans,
+> no waterfall, no automatic latency breakdown per hop, and reconciliation-driven work (no
+> live request behind it) has no id to carry. Micrometer Tracing with a real backend is the
+> next step if that ever becomes worth the infrastructure.
 
 **"Walk me through your Dockerfile."**
 > Multi-stage. A JDK builds, a JRE runs — the runtime image has no compiler, no Maven, no
@@ -667,7 +674,8 @@ answer than not having noticed.
 - **No authentication anywhere.** No auth on endpoints, no TLS, no Kafka SASL.
 - **Unit price comes from the client.** A real system prices server-side from a catalogue; a
   client that sets its own price can set it to zero.
-- **No metrics or tracing.** Actuator health only.
+- **No metrics or distributed tracing.** Actuator health only, plus the correlation-id log
+  correlation above — real, but not the same claim as tracing spans or request metrics.
 
 If asked "is this production-ready?" — **no, and say so**: no auth, no HA, no observability,
 no load testing. It's a correctness demonstrator.
@@ -741,8 +749,19 @@ Frame as problems solved, not technologies used.
 > lost the whole stack on the next start — found by checking the live containers over SSH,
 > not by assuming the script worked because it exited 0.
 
+> **Correlated one request's story across five services and a message broker using nothing
+> but a header and GKE's log pipeline** — no ELK, no new infrastructure. The gateway's
+> correlation id now rides every Kafka message as a header (attached when the outbox writes
+> the row, read back off the header by each consumer into its own MDC), and one Cloud
+> Logging query returns every service's log line for that request, in order. Deliberately
+> not distributed tracing — no spans, no latency waterfall — chosen because the actual gap
+> was "can't find the story," not "can't see per-hop latency," and the cheaper fix solved the
+> real problem without adding a stateful service to a cluster that was already tight on
+> spare capacity.
+
 **Do not yet write:** TLS on the public endpoint, GitOps (the deployed manifest is not yet the
-single source of truth — `kubectl set image` updates the cluster directly).
+single source of truth — `kubectl set image` updates the cluster directly), distributed
+tracing (spans/waterfalls — what exists is log correlation, a different and smaller claim).
 
 ---
 
