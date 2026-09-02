@@ -23,3 +23,8 @@ eureka:
 logging:
   pattern:
     level: "%5p [${spring.application.name:},%X{correlationId:-}]"
+
+# JwtAuthFilter needs this to exist at context startup (HS256 needs >= 32 bytes); the
+# actual value doesn't matter for routing tests, none of which hit a gated path.
+jwt:
+  secret: test-only-secret-value-not-used-for-anything-real-0123456789

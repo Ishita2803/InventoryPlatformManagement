@@ -21,6 +21,14 @@ spec:
           envFrom:
             - configMapRef:
                 name: platform-config
+          env:
+            # Must match auth-service's JWT_SECRET exactly -- both read the same key
+            # from the same Secret, since one signs and the other verifies.
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: impulse-secrets
+                  key: jwt-secret
           resources:
             requests:
               memory: "512Mi"

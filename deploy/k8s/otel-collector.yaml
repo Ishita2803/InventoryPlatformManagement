@@ -1,0 +1,95 @@
+# Phase D1 -- OpenTelemetry Collector, in-cluster.
+#
+# Why this exists at all: Google's Java-native Cloud Trace exporter
+# (com.google.cloud.opentelemetry:exporter-trace) is deprecated and scheduled for
+# archival after 2026-09-30 -- confirmed by reading its own source, which logs a
+# deprecation warning on class load. Google's own migration guidance is to export plain
+# OTLP to a Collector running the `googlecloud` exporter, which is what this is.
+#
+# Every application pod exports OTLP to this Collector with zero GCP-specific code and
+# zero credentials of its own; the Collector is the only thing that talks to Cloud Trace,
+# authenticated via the SAME Workload Identity GSA (order-platform-workload) already
+# bound to every other pod's KSA since Phase 15 -- granted `roles/cloudtrace.agent` at
+# the project level for this purpose, no new service account, no key file.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: otel-collector-config
+data:
+  collector.yaml: |
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+          http:
+            endpoint: 0.0.0.0:4318
+
+    processors:
+      batch:
+
+    exporters:
+      googlecloud:
+        project: inventorymanagement-507107
+
+    service:
+      pipelines:
+        traces:
+          receivers: [otlp]
+          processors: [batch]
+          exporters: [googlecloud]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: otel-collector
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: otel-collector
+  template:
+    metadata:
+      labels:
+        app: otel-collector
+    spec:
+      # Reuses the existing Workload Identity binding rather than minting a new GSA/KSA
+      # pair -- this pod needs exactly one permission (write traces) that the existing
+      # order-platform-workload identity already has.
+      serviceAccountName: order-platform-workload
+      containers:
+        - name: otel-collector
+          image: otel/opentelemetry-collector-contrib:latest
+          args: ["--config=/etc/otel/collector.yaml"]
+          ports:
+            - containerPort: 4317
+            - containerPort: 4318
+          resources:
+            requests:
+              cpu: 50m
+              memory: 100Mi
+            limits:
+              cpu: 200m
+              memory: 200Mi
+          volumeMounts:
+            - name: config
+              mountPath: /etc/otel
+      volumes:
+        - name: config
+          configMap:
+            name: otel-collector-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: otel-collector
+spec:
+  selector:
+    app: otel-collector
+  ports:
+    - name: otlp-grpc
+      port: 4317
+      targetPort: 4317
+    - name: otlp-http
+      port: 4318
+      targetPort: 4318

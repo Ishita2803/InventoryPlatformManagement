@@ -894,6 +894,82 @@ pipeline as every other change to these services.
 
 ---
 
+# Part D — Impulse: Supply Chain Management (mainframe modernization capstone)
+
+The real target this whole project was scaffolding for. Adds vendors, products,
+warehouses, carriers, customers/end-users, purchase orders (admin stocking + vendor
+backorders + direct orders), sales orders (nearest-warehouse fulfillment, partial
+fulfillment, weight-based invoicing), and role-based screens for admin/vendor/customer/
+carrier — plus real authentication and real distributed tracing, both previously
+documented gaps.
+
+Full design (service boundaries, key flows, auth design, tracing design, frontend
+approach) is in the approved plan at `C:\Users\Karthik\.claude\plans\ethereal-weaving-zebra.md`
+on the machine this was planned on; summarized here as it's built, phase by phase, the
+same way every other part of this project is documented.
+
+**Locked decisions specific to Part D** (confirmed with Karthik directly, not assumed):
+
+| Decision | Choice | Why |
+|---|---|---|
+| Tracing backend | OpenTelemetry Collector in-cluster, exporting to GCP Cloud Trace | Google's Java-native Cloud Trace exporter (`com.google.cloud.opentelemetry:exporter-trace`) is deprecated and scheduled for archival after 2026-09-30 — confirmed by reading its own source. The Collector is Google's own migration guidance. |
+| Purchase orders | Folded into `order-service`, not a separate `purchase-order-service` | Same shape of problem as sales orders (an order fulfilled via events), same outbox/saga/idempotency machinery already built. A separate service would have been an artificial boundary, not a real bounded-context difference. |
+| Vendor/Customer/Carrier | Considered merging into one service; kept separate (see D2-D4) | Each is a genuinely distinct bounded context (different actor, different onboarding/login) with no shared lifecycle — unlike purchase/sales orders, there's no real coupling to justify a merge, only fewer pods, which is a weaker reason. |
+| Auth | Real login: username/password + JWT, bcrypt-hashed, gateway-enforced roles | Closes a real documented gap ("no authentication anywhere"). Dedicated `auth-service` rather than folded into partner data, because `ADMIN` has no other home and login is a distinct security concern from business data. |
+| Secrets (new, Part D only) | Plain Kubernetes `Secret` (`impulse-secrets`), not the Secret-Manager-CSI pipeline | Phase 14/15 already proved that pipeline works and documented its CSI-driver RBAC gap; repeating it for every new secret compounds the same operational complexity without teaching a new lesson. Existing DB passwords stay on the original pipeline unchanged. |
+| `auth_db` | Second schema + app user on the existing `order-mysql` instance, not a third MySQL container | Credential is a handful of rows; a whole extra `mysqld` process for that is operationally wasteful on a 4 GB data VM. |
+| Node pool capacity | Bumped `max-nodes` 4 → 6 | Auth-service + otel-collector pushed the cluster back into the exact capacity crunch Phase 15 first hit — same fix as before (raise the ceiling), same root cause (`e2-medium` nodes have very little allocatable headroom once GKE's own addons are accounted for). |
+
+## Phase D1 — Auth & tracing foundation 🟡 *(auth verified live 2026-09-02; tracing export to Cloud Trace not yet confirmed)*
+
+- [x] `auth-service` (new): `Credential` entity (username, bcrypt hash, role, businessId),
+      `POST /auth/login` issues an HS256 JWT, `POST /auth/credentials` (not routed
+      through the gateway — internal-only, same boundary `payment-service` already
+      relies on) for other services to call at onboarding time in D2-D4,
+      `GET /auth/me` as a protected smoke-test route. 4 demo users seeded on startup
+      (one per role) so this phase is checkable before D2-D4 exist to onboard anyone for
+      real.
+- [x] Gateway `JwtAuthFilter` — verifies the token with the same shared secret, forwards
+      decoded claims downstream as `X-User-Name`/`X-User-Role`/`X-User-Business-Id`
+      headers (same shape as `CorrelationIdFilter`). **Opt-in, not opt-out**: only exact
+      paths listed in its authorization map are gated (`/auth/me` today); every route
+      from before Part D is untouched and stays exactly as open as it always was.
+- [x] `otel-collector` deployed in-cluster (`otel/opentelemetry-collector-contrib`,
+      `googlecloud` exporter, reusing the existing `order-platform-workload` Workload
+      Identity GSA granted `roles/cloudtrace.agent`). Every service exports plain OTLP
+      with zero GCP-specific code.
+- [ ] **Not yet verified: spans actually reaching Cloud Trace.** `auth-service` and the
+      gateway both have `spring-boot-starter-opentelemetry` wired in and configured; the
+      OTLP HTTP exporter demonstrably initializes (confirmed via DEBUG logs), but no
+      spans have reached Cloud Trace after multiple real requests and repeated fixes to
+      the export endpoint property (see traps below). Root cause not yet found — likely
+      a missing HTTP-server-instrumentation trigger specific to this very new Boot 4.1
+      `spring-boot-starter-opentelemetry` module. **Do not claim tracing works until this
+      is confirmed with a real trace visible in the Cloud Trace console.**
+
+**Real bugs found and fixed getting this far, worth knowing:**
+1. `kubectl apply` on a manifest whose image field still names an old tag silently
+   reverted a manual `kubectl set image` update — the exact "manifest reflects last
+   *manually applied* state" trap from Phase 16/17, this time catching the image field
+   itself rather than a config value.
+2. The gateway's own k8s manifest was missing the `JWT_SECRET` env var entirely
+   (only `auth-service`'s had it) — crashed on `jwtAuthFilter` bean creation with an
+   unresolved placeholder, caught immediately via `kubectl logs` on the crash-looping pod.
+3. **`management.otlp.tracing.*` is deprecated at *error* level as of Spring Boot 4.0**
+   and silently does not bind at all — confirmed by reading
+   `spring-boot-micrometer-tracing-opentelemetry`'s own
+   `spring-configuration-metadata.json` after tracing config appeared to have no effect.
+   The real property is `management.opentelemetry.tracing.export.otlp.endpoint`, default
+   transport HTTP on port 4318 with the full `/v1/traces` path, not gRPC on 4317.
+
+**Exit (partial):** met for auth — verified live: all 4 seeded roles log in and receive a
+correctly-claimed JWT; `/auth/me` returns 401 with no token, 401 with a garbage token, and
+200 with the decoded identity for a valid token, all against the real deployed gateway.
+**Not met for tracing** — carried forward as this phase's first remaining task before D2
+starts, per this project's own rule that a phase isn't done until its exit criteria pass.
+
+---
+
 ## Resume discipline
 
 Claim a capability **only after it is implemented and tested.** Interviewers ask about

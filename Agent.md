@@ -98,7 +98,9 @@ aggregator pom, so "build everything" means looping over modules.
 | `inventory-service` | 8082 | Stock + reservations, `inventory_db` | yes | yes |
 | `notification-service` | 8083 | Consumes both result topics, mock email. **No database** | yes | yes |
 | `payment-service` | 8084 | Mocked, synchronous, idempotent by orderId. **No database** | yes | yes |
-| MySQL | 3306 | **both** schemas on one instance | — | on the data VM |
+| `auth-service` (Part D) | 8085 | Login, JWT issuance, bcrypt hashing. `auth_db` | yes | yes |
+| `otel-collector` (Part D) | 4317 (grpc) / 4318 (http) | Receives OTLP, exports to Cloud Trace via `googlecloud` exporter | n/a | yes |
+| MySQL | 3306 | **three** schemas on one instance (`order_db`, `auth_db`) + a second instance (`inventory_db`, 3307) | — | on the data VM |
 | Kafka | 9092 in-network / **29092 on the host** | `order.placed`, `inventory.reserved`, `inventory.failed`, `order.confirmed`, `order.cancelled` | — | on the data VM |
 
 Note `discovery-service`'s application name is `discovery-server`, which does **not** match
@@ -558,6 +560,20 @@ esourcesin\docker.exe` or start a new shell.
     file was created (Phase 13) by a different Google account than the one OS Login mapped
     this session to. `scp` to `/tmp`, then `sudo cp` into place — the standard workaround, not
     specific to this project.
+52. **`management.otlp.tracing.*` is deprecated at *error* level as of Spring Boot 4.0** and
+    silently does not bind — no warning at startup, the property is just ignored, and tracing
+    config that looks correct has zero effect. Confirmed by reading
+    `spring-boot-micrometer-tracing-opentelemetry`'s own `spring-configuration-metadata.json`
+    after real requests through a fully-wired `otel-collector` produced zero spans in Cloud
+    Trace. The real property is `management.opentelemetry.tracing.export.otlp.endpoint`
+    (default transport HTTP on port 4318, full `/v1/traces` path — not gRPC on 4317). The
+    metrics-export equivalent (`management.otlp.metrics.export.enabled`) is *not* deprecated;
+    only the tracing namespace moved.
+53. **XML comments cannot contain a literal `--` anywhere in the body**, not just at the
+    closing `-->`. A pom.xml comment written in this project's usual prose style ("only
+    needs X -- deliberately not Y") fails the whole POM to parse with a cryptic
+    `Non-parseable POM` / `ModelParseException` pointing at an unrelated later line. Use a
+    comma or semicolon instead of `--` inside any XML comment.
 
 ## 9. Startup order and verification (local)
 
@@ -587,6 +603,47 @@ A 200 with **empty** `propertySources` means the filename doesn't match
 ## 10. Change log
 
 Newest first. Add an entry for every meaningful change.
+
+### 2026-09-02/03 — Phase D1 started: auth-service + gateway JWT verified live; tracing export still open
+- **Part D begins** — the "Impulse" supply chain modernization system this whole project
+  was scaffolding for. Full design in the approved plan (service boundaries, key flows,
+  auth/tracing design, phased delivery D1-D11) — see `plan.md`'s new Part D section for
+  the summary as it's built.
+- **`auth-service` (new)**: `Credential` (username, bcrypt hash, role, businessId),
+  `POST /auth/login` → HS256 JWT, `POST /auth/credentials` (never routed through the
+  gateway — internal-only, same boundary as `payment-service`), `GET /auth/me` as a
+  protected smoke-test route. 4 demo users seeded on startup, one per role.
+- **Gateway `JwtAuthFilter`** — verifies the token with a secret shared via a plain k8s
+  `Secret` (`impulse-secrets`), forwards decoded claims as `X-User-*` headers. Opt-in: an
+  explicit map of exact paths to required roles, defaulting to "not gated" for anything
+  not listed — every pre-Part-D route is untouched.
+- **`otel-collector` deployed in-cluster** (contrib distribution, `googlecloud` exporter,
+  reusing the existing `order-platform-workload` Workload Identity GSA, newly granted
+  `roles/cloudtrace.agent`) — chosen over Google's Java-native Cloud Trace exporter
+  because that library is deprecated and scheduled for archival after 2026-09-30
+  (confirmed by reading its own source, which logs the deprecation warning on class
+  load).
+- **Verified live**: all 4 seeded roles log in and get a correctly-claimed JWT; `/auth/me`
+  correctly returns 401/401/200 for no-token/garbage-token/valid-token respectively,
+  against the real public gateway.
+- **Not yet verified: tracing.** Spans are not reaching Cloud Trace despite the exporter
+  demonstrably initializing. See §8 for the deprecated-property trap found along the way;
+  root cause of the missing spans themselves is still open. **Phase D1 is not done** —
+  carried forward as the first task before D2, per this project's own rule.
+- **Three real bugs, all caught by checking live state rather than assuming a manifest
+  apply or a config value did what it looked like it should:**
+  1. `kubectl apply` on `deploy/k8s/api-gateway-service.yaml` silently reverted a manual
+     `kubectl set image` update, because the checked-in file still named the old tag —
+     the "manifest reflects last manually-applied state" trap, this time on the image
+     field.
+  2. The gateway's k8s manifest had no `JWT_SECRET` env var at all (only auth-service's
+     did) — crashed on `jwtAuthFilter` bean creation with an unresolved placeholder,
+     caught immediately from the crash-looping pod's own logs.
+  3. `management.otlp.tracing.*` is deprecated at **error** level as of Spring Boot 4.0 —
+     confirmed via the auto-config module's own `spring-configuration-metadata.json`.
+- **Capacity**: node pool `max-nodes` bumped 4 → 6 — auth-service + otel-collector pushed
+  the cluster back into the exact scheduling crunch Phase 15 first hit (`Insufficient
+  cpu`/`memory` on all nodes). Same fix as before.
 
 ### 2026-09-02 — Phase 21: correlation-id log tracing across the whole event lifecycle
 - **The request/message trail, previously stopping at the gateway (documented gap since
