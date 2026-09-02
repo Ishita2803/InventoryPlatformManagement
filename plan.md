@@ -696,7 +696,7 @@ inventory (qty 10) created, then an order placed **before** inventory existed fo
 reached `INVENTORY_FAILED`; a second order for qty 2 reached `CONFIRMED` in ~3s with stock
 correctly settled (`available` 10→8, `reserved` back to 0 — shipped, not merely held).
 
-## Phase 16 — Public internet access 🟡 *(gateway public, rate-limited, and verified 2026-09-02; TLS still open)*
+## Phase 16 — Public internet access ✅ *(done 2026-09-02; optional TLS explicitly skipped by choice)*
 
 - [x] Reserve a static external IP — `35.208.57.189`, **Standard** network tier (cheaper than
       Premium), reserved via the console (`VPC network → IP addresses`), `us-central1`.
@@ -712,7 +712,9 @@ correctly settled (`available` 10→8, `reserved` back to 0 — shipped, not mer
 - [x] Sanity-checked Actuator `env` / `heapdump` — already not exposed. The gateway's
       `management.endpoints.web.exposure.include` in `config-repo` was already
       `health,info,gateway` since Phase 7; no code change was needed here.
-- [ ] *Optional TLS:* not done.
+- [ ] *Optional TLS:* skipped by deliberate choice, not an oversight — Karthik chose to move
+      to Phase 17 rather than add a `nip.io` hostname + cert-manager for a portfolio demo
+      currently reached by its raw IP. Revisit if a domain name is ever bought.
 - [x] Rate-limit the gateway. Hand-rolled `RateLimitFilter` — per-client-IP, fixed window
       (`ConcurrentHashMap<String, AtomicInteger>`), no Redis, ordered right after
       `CorrelationIdFilter`. Configurable via `gateway.rate-limit.{requests-per-window,

@@ -15,6 +15,13 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# id-token: write is what lets the `deploy` job exchange a GitHub OIDC token for a short-lived
+# GCP credential via Workload Identity Federation -- no service-account key file, anywhere,
+# ever. contents: read is the checkout action's own minimum.
+permissions:
+  contents: read
+  id-token: write
+
 jobs:
   build:
     name: build · ${{ matrix.service }}
@@ -95,3 +102,86 @@ jobs:
           timeout 420 bash -c 'until [ "$(docker compose ps --format "{{.Health}}" | grep -c healthy)" -eq 3 ]; do sleep 5; done'
           docker compose ps
           docker compose down -v
+
+  deploy:
+    name: deploy · ${{ matrix.service }}
+    runs-on: ubuntu-latest
+    needs: [build, images]
+    # Only a real push to main deploys. A pull_request run gets a GITHUB_TOKEN with no
+    # bearing on GCP at all, and even on push, gating explicitly here means a future trigger
+    # added to `on:` above can't silently start deploying without this line changing too.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    strategy:
+      # One service's rollout failing does not block the other five -- they are independently
+      # deployable, and a partial rollout is more informative than an all-or-nothing one.
+      fail-fast: false
+      matrix:
+        # discovery-service is deliberately absent -- Phase 15 dropped it from the cluster
+        # entirely in favour of Kubernetes Service DNS.
+        service:
+          - config-service
+          - api-gateway-service
+          - order-service
+          - inventory-service
+          - notification-service
+          - payment-service
+
+    env:
+      PROJECT_ID: inventorymanagement-507107
+      REGION: us-central1
+      REPO: order-platform-repo
+      CLUSTER: order-platform-cluster
+      ZONE: us-central1-a
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Exchanges this workflow run's GitHub-issued OIDC token for a short-lived GCP access
+      # token, scoped to exactly the repo the Workload Identity Pool's attribute condition
+      # allows. No JSON key ever exists, on the runner or anywhere else.
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/713308652353/locations/global/workloadIdentityPools/github-actions-pool/providers/github-provider
+          service_account: github-actions-deployer@inventorymanagement-507107.iam.gserviceaccount.com
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
+
+      - name: Build and push image
+        run: |
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          IMAGE=${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO }}/${{ matrix.service }}:$SHORT_SHA
+          docker build -t "$IMAGE" ./${{ matrix.service }}
+          docker push "$IMAGE"
+          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+
+      # Installs gke-gcloud-auth-plugin and writes kubeconfig -- the supported replacement for
+      # a bare `gcloud container clusters get-credentials`, which as of k8s 1.26+ needs that
+      # plugin present and does not install it for you.
+      - name: Get GKE credentials
+        uses: google-github-actions/get-gke-credentials@v2
+        with:
+          cluster_name: ${{ env.CLUSTER }}
+          location: ${{ env.ZONE }}
+
+      # kubectl set image, not a git-committed manifest change applied here. The trade-off,
+      # stated plainly: deploy/k8s/*.yaml's image tag reflects the last *manually* applied
+      # state, not necessarily what is live -- `kubectl get deployment -o yaml` is the source
+      # of truth for what's running. A full GitOps setup (the manifest itself as the only
+      # source of truth, reconciled by Argo CD or Flux) is the more complete answer and a
+      # known next step, not implemented here to keep one moving part instead of three.
+      - name: Roll out the new image
+        run: |
+          kubectl set image deployment/${{ matrix.service }} \
+            ${{ matrix.service }}=${{ env.IMAGE }} \
+            -n default
+
+      # Fails the job if the rollout doesn't reach Ready within the timeout -- readiness
+      # probes are what gate this, so a bad image (e.g. one that can't reach config-service)
+      # surfaces here as a failed deploy, not as a silent bad rollout discovered later.
+      - name: Wait for rollout to complete
+        run: kubectl rollout status deployment/${{ matrix.service }} -n default --timeout=180s
