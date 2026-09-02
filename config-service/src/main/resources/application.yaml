@@ -33,3 +33,18 @@ management:
     web:
       exposure:
         include: health,info
+  tracing:
+    enabled: true
+    sampling:
+      probability: 1.0
+  # NOT management.otlp.tracing.* -- deprecated at error level as of Boot 4.0, silently
+  # does not bind. See auth-service's config-repo entry for the full explanation.
+  opentelemetry:
+    tracing:
+      export:
+        otlp:
+          endpoint: http://otel-collector:4318/v1/traces
+  otlp:
+    metrics:
+      export:
+        enabled: false
