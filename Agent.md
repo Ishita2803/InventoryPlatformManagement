@@ -567,6 +567,36 @@ A 200 with **empty** `propertySources` means the filename doesn't match
 
 Newest first. Add an entry for every meaningful change.
 
+### 2026-09-02 — Phase 16: rate-limiting shipped, and a real bug only the live LB could expose
+- **`RateLimitFilter`** (`api-gateway-service/filter/`): per-client-IP, fixed-window,
+  in-memory (`ConcurrentHashMap<String, AtomicInteger>`), ordered right after
+  `CorrelationIdFilter` so a rejected request still carries a correlation id. Config via
+  `gateway.rate-limit.{requests-per-window,window-seconds}` in `config-repo`, default
+  50/second. A `@Scheduled` sweep evicts windows untouched for 10× their own lifetime so a
+  public endpoint hit by many distinct client IPs doesn't grow the map unbounded. Chose this
+  over Spring Cloud Gateway's built-in `RequestRateLimiter` because that needs Redis, and
+  there is no Redis anywhere in this stack — adding a stateful dependency solely to
+  rate-limit one lightly-loaded gateway would be disproportionate. 3 new integration tests;
+  9/9 gateway tests green.
+- **Real bug, and a real lesson about what unit tests can't reach.** The filter passed every
+  unit test, then let a 100-request concurrent burst through as 100×200 against the live LB.
+  Root cause: the Service's `externalTrafficPolicy` defaults to `Cluster`, under which
+  kube-proxy **SNATs every request to the receiving node's own IP** before forwarding to the
+  pod — `request.getRemoteAddr()` never saw the real client, only one of 4 node IPs, silently
+  fragmenting one client's burst across up to 4 separate rate-limit counters, each comfortably
+  under the limit alone. No unit test could have caught this: none of them go through
+  kube-proxy. Fixed with `externalTrafficPolicy: Local`, which preserves the real client IP
+  end-to-end. Confirmed two ways: the GCP target pool's health check now reports exactly the
+  one node hosting the pod as `HEALTHY` (the other three correctly `UNHEALTHY`, since `Local`
+  only routes to nodes with a currently-`Ready` local pod — a non-cost here with one replica);
+  and a second live burst test produced 92×200 + 7×429, matching both the HTTP status codes
+  and the pod's own "Rate limit exceeded" log count.
+- Built and pushed `api-gateway-service:f0c3e94` to Artifact Registry with this code; deployed
+  and confirmed the running pod picked up `config-service`'s new `gateway.rate-limit.*`
+  values (`requests-per-window: 50`, not the code's fallback default) via
+  `wget -qO- http://config-service:8888/api-gateway-service/default` from inside the cluster.
+- **Still open in Phase 16:** optional TLS.
+
 ### 2026-09-02 — Phase 16 started: gateway public via a static IP, LoadBalancer over NodePort
 - **Reserved a Standard-tier static external IP** (`35.208.57.189`, `us-central1`) via the
   console, and changed `api-gateway-service`'s k8s `Service` from implicit `ClusterIP` to

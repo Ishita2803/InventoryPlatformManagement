@@ -696,7 +696,7 @@ inventory (qty 10) created, then an order placed **before** inventory existed fo
 reached `INVENTORY_FAILED`; a second order for qty 2 reached `CONFIRMED` in ~3s with stock
 correctly settled (`available` 10→8, `reserved` back to 0 — shipped, not merely held).
 
-## Phase 16 — Public internet access 🟡 *(gateway public and verified 2026-09-02; rate-limiting and TLS still open)*
+## Phase 16 — Public internet access 🟡 *(gateway public, rate-limited, and verified 2026-09-02; TLS still open)*
 
 - [x] Reserve a static external IP — `35.208.57.189`, **Standard** network tier (cheaper than
       Premium), reserved via the console (`VPC network → IP addresses`), `us-central1`.
@@ -713,18 +713,37 @@ correctly settled (`available` 10→8, `reserved` back to 0 — shipped, not mer
       `management.endpoints.web.exposure.include` in `config-repo` was already
       `health,info,gateway` since Phase 7; no code change was needed here.
 - [ ] *Optional TLS:* not done.
-- [ ] Rate-limit the gateway — not done. Plan: a lightweight in-memory token-bucket filter
-      (e.g. Bucket4j) rather than Spring Cloud Gateway's Redis-backed `RequestRateLimiter` —
-      there's no Redis anywhere in this stack, and adding one solely for rate-limiting would
-      be disproportionate to what it buys.
+- [x] Rate-limit the gateway. Hand-rolled `RateLimitFilter` — per-client-IP, fixed window
+      (`ConcurrentHashMap<String, AtomicInteger>`), no Redis, ordered right after
+      `CorrelationIdFilter`. Configurable via `gateway.rate-limit.{requests-per-window,
+      window-seconds}` in `config-repo`, defaulting to 50/second. 3 new integration tests
+      (within limit succeeds; the request that exceeds it gets 429 JSON with `Retry-After`
+      and never reaches the downstream; the limit resets once the window elapses) — 9/9
+      gateway tests green.
 
-**Exit: met for the core criterion, 2026-09-02.** `curl http://35.208.57.189/api/orders`
-returns real order data from outside the cluster (verified from this machine, not yet from a
-phone on mobile data — worth a quick check, but the network path proven is the one that
-matters: an external client, not `kubectl port-forward`). A direct request to
-`order-service:8081` from outside times out. Rate-limiting and TLS remain open and are not
-required for this exit criterion as written, but should close before calling Phase 16 fully
-done.
+**Exit: met, 2026-09-02.** `curl http://35.208.57.189/api/orders` returns real order data
+from outside the cluster. A direct request to `order-service:8081` from outside times out.
+Rate-limiting verified **live against the real LB**, not just in unit tests: a burst of 100
+concurrent requests from one client produced 92×200 and 7×429, confirmed both by the HTTP
+status codes and by grepping the pod's own "Rate limit exceeded" log lines. TLS remains open
+(optional per the plan) and is the only thing left before calling Phase 16 fully done.
+
+**A second real bug, found only by testing against the live LB, not port-forward or unit
+tests.** The first live burst test returned 100×200 — the rate limiter never triggered at
+all, contradicting the unit tests (which passed a real `HttpServletRequest` object with a
+consistent, single remote address). Root cause: the Service's `externalTrafficPolicy`
+defaults to `Cluster`, under which kube-proxy **SNATs every request to the receiving node's
+own IP** before handing it to the pod — so `request.getRemoteAddr()` saw one of 4 node IPs,
+never the real client, and one client's burst was silently fragmented across up to 4 separate
+rate-limit counters (each well under the limit alone). Fixed with
+`externalTrafficPolicy: Local`, which preserves the true client IP end-to-end — the
+documented trade-off (traffic only reaches nodes with a currently-`Ready` local pod) doesn't
+cost anything extra here since there is exactly one gateway replica. Confirmed via the GCP
+target pool's own health check: after the change, exactly the one node hosting the pod
+reported `HEALTHY`, the other three correctly `UNHEALTHY`. **This is a trap that unit tests
+structurally cannot catch** — they never go through kube-proxy at all — which is why the plan
+now treats "verified against the real load balancer" as a distinct, required check, not
+redundant with integration tests that pass.
 
 **A real gotcha, worth knowing for next time.** The first `LoadBalancer` apply failed
 repeatedly with `SyncLoadBalancerFailed: requested IP "..." belongs to the Standard network

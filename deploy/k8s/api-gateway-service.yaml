@@ -1,5 +1,3 @@
-# ClusterIP only -- Phase 16 handles public access. Until then, reached via
-# `kubectl port-forward svc/api-gateway-service 8080:8080`.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -17,7 +15,7 @@ spec:
     spec:
       containers:
         - name: api-gateway-service
-          image: us-central1-docker.pkg.dev/inventorymanagement-507107/order-platform-repo/api-gateway-service:204439c
+          image: us-central1-docker.pkg.dev/inventorymanagement-507107/order-platform-repo/api-gateway-service:f0c3e94
           ports:
             - containerPort: 8080
           envFrom:
@@ -61,6 +59,13 @@ spec:
   # region us-central1, Standard network tier -- GKE's external LB then binds to it
   # instead of an ephemeral address that would change on every recreation.
   loadBalancerIP: "35.208.57.189"
+  # Cluster (the k8s default) has kube-proxy SNAT every request to the receiving node's own
+  # IP before forwarding to the pod, so request.getRemoteAddr() sees one of the 4 node IPs,
+  # never the real client -- which silently broke RateLimitFilter's per-client-IP keying by
+  # fragmenting one client's traffic across up to 4 separate counters. Local preserves the
+  # original client IP end to end; the trade-off (traffic only reaches nodes that currently
+  # have a Ready pod) is moot here since there's one gateway replica anyway.
+  externalTrafficPolicy: Local
   selector:
     app: api-gateway-service
   ports:
