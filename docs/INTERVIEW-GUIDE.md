@@ -1,5 +1,18 @@
 # Interview guide — Fault-Tolerant Order Fulfillment Platform
 
+> **Part D in progress (as of Phase D6):** everything below this note describes the
+> Phase 1-11 order/inventory demo, which is still fully built, tested, and true. On top
+> of it, a real supply-chain domain ("Impulse" — vendors, warehouses, carriers,
+> customers, purchase orders, and eventually sales-order fulfillment/billing/direct
+> orders) is being built in Part D of `plan.md`. That domain adds real JWT auth
+> (Phase D1) and real distributed tracing via Cloud Trace (Phase D1) — reflected in §8
+> below — but its own pitch/whiteboard/data-model story isn't written up here yet. Do
+> **not** describe purchase orders, vendors, warehouses, or carriers as part of "the
+> pitch" until this note is replaced with a rewritten §1-§5 (planned for once Part D's
+> frontend and analytics phases, D10-D11, land and the whole flow can be told as one
+> story). Until then, `plan.md`'s Phase D1-D6 entries are the source of truth for what's
+> actually built in that domain.
+
 > **What this file is for.** Everything you need to explain this project confidently, from a
 > 30-second pitch to a whiteboard deep-dive, plus the awkward questions and honest answers.
 >
@@ -671,14 +684,24 @@ answer than not having noticed.
   can see the other's schema. Say which one you mean.
 - **Single Kafka broker.** No replication, no HA. `acks=all` is set, which matters only once
   there's more than one broker.
-- **No authentication anywhere.** No auth on endpoints, no TLS, no Kafka SASL.
-- **Unit price comes from the client.** A real system prices server-side from a catalogue; a
-  client that sets its own price can set it to zero.
-- **No metrics or distributed tracing.** Actuator health only, plus the correlation-id log
-  correlation above — real, but not the same claim as tracing spans or request metrics.
+- **Auth is real but minimal.** `auth-service` issues HS256 JWTs over bcrypt-hashed
+  passwords, and the gateway enforces per-route/per-role authorization (Phase D1) — but
+  there is no refresh-token flow, no password reset, and expiry is short by design. This is
+  a demo of real auth *mechanics*, not a production identity system — say that plainly if
+  asked "is this how you'd do auth for real."
+- **Unit price comes from the client** on the original Phase 1-11 `order-service`/
+  `inventory-service` demo endpoints. The Part D catalog (`CatalogItem.salePrice`, set
+  admin-side in `inventory-service`) fixes this for the Impulse domain, but the older
+  endpoints still take price from the request — say which API you mean if asked.
+- **Distributed tracing is real, not just log correlation** — Micrometer Tracing +
+  an in-cluster OpenTelemetry Collector export every request's trace to GCP Cloud Trace
+  (Phase D1), so a single flow across the gateway, Kafka, and every downstream service
+  shows up as one connected waterfall, verified live. Metrics beyond Actuator health are
+  still not built.
 
-If asked "is this production-ready?" — **no, and say so**: no auth, no HA, no observability,
-no load testing. It's a correctness demonstrator.
+If asked "is this production-ready?" — **no, and say so**: minimal auth (no refresh tokens,
+no password reset), no HA, partial observability (tracing yes, metrics no), no load
+testing. It's a correctness demonstrator.
 
 ---
 

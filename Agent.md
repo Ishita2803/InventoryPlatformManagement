@@ -607,6 +607,49 @@ A 200 with **empty** `propertySources` means the filename doesn't match
 
 Newest first. Add an entry for every meaningful change.
 
+### 2026-09-03 — Phase D6 complete: purchase orders, folded into order-service (not a new pod)
+- **`PurchaseOrder`** added to `order-service` as a new aggregate — purchaseOrderId,
+  vendorId, skuNumber, quantity, warehouseId, **purpose** (`STOCKING`/`BACKORDER`/`DIRECT`,
+  only `STOCKING` used this phase), **status** (`PENDING`/`FULFILLED`, no `REJECTED` — the
+  mock vendor always succeeds). Reuses the exact transactional-outbox shape Phase 4 built
+  for sales orders, rather than standing up a separate `purchase-order-service` — same
+  actor/lifecycle coupling reasoning that kept vendor/customer/carrier as separate
+  services in the other direction.
+- **`POST /api/purchase-orders`** (ADMIN only) resolves the sku's owning vendor via a sync
+  call to vendor-service (new `VendorServiceClient` in order-service, same shape as
+  inventory-service's D5 client), saves the PO, writes a `PurchaseOrderPlaced` outbox event.
+- **`PurchaseOrderPlacedListener`** is the mock vendor — no real vendor system exists to
+  call, so it consumes `PurchaseOrderPlaced` and immediately marks the PO fulfilled
+  (idempotent via the existing `ProcessedEvent` table), writing `PurchaseOrderFulfilled`.
+- **`inventory-service`'s `PurchaseOrderFulfilledListener`** consumes the fulfilled event,
+  resolves `skuNumber → Product.id`, and calls the existing (Phase 1) `addInventory` —
+  purely additive, the Phase 1 machinery itself is untouched.
+- **`GET /api/purchase-orders`** (ADMIN + VENDOR) — ADMIN sees every PO, VENDOR sees only
+  their own (`vendorId` from the JWT's business-id claim, never a client-supplied param).
+- **Real integration bug found and fixed before it ever ran live**: inventory-service's own
+  Phase-1 `Product` (id/sku/name) is a separate table from vendor-service's much richer
+  `Product`, and nothing synced them — the fulfillment listener's `sku → Product.id`
+  lookup would have thrown `ProductNotFoundException` on every purchase order for a sku
+  nobody had priced *since this fix shipped*. Fixed by having `CatalogService.setSalePrice`
+  (D5) also upsert inventory-service's own `Product` row for a never-seen sku, using
+  `productName` fetched from vendor-service. **Caught the gap this fix does NOT close**
+  live: a sku priced *before* this fix deployed (from D5's own verification) still had no
+  Product row, so its first D6 purchase order genuinely failed with
+  `ProductNotFoundException`, retried 3 times, and landed in `purchase.order.fulfilled.DLT`
+  — exactly the DLT machinery Phase 9 built doing its job. Re-setting that sku's price
+  (which now upserts the missing row) and placing a second purchase order fulfilled
+  cleanly. This is expected, pre-existing-data behavior, not a flaw in the fix — new skus
+  priced from here on never hit it.
+- Gateway: `/api/purchase-orders/**` folded into order-service's existing route predicate
+  (not a new route entry) — `POST` ADMIN-only, `GET` ADMIN+VENDOR.
+- **Verified live**: admin placed a stocking PO against a real vendor sku; mock vendor
+  fulfilled it in under 2 seconds; inventory-service's stock for that sku/warehouse
+  increased by exactly the ordered quantity (`GET /api/inventory?productId=&warehouseId=`
+  confirmed the real row); a vendor's own JWT saw only its own POs (empty list for an
+  unrelated seeded vendor) and got 403 trying to create one. Full `inventory-service` and
+  `order-service` test suites (`./mvnw verify`, Testcontainers MySQL/Kafka ITs included)
+  re-run and green after the new code.
+
 ### 2026-09-02 — Phase D5 complete: warehouses & catalog pricing, added to inventory-service
 - **`Warehouse`** (warehouseId, location, **region**) added to `inventory-service` —
   registered separately from `Inventory.warehouseId`, which has been a bare, unvalidated

@@ -1088,6 +1088,47 @@ one; setting a price for a sku that doesn't exist at any vendor returns
 
 ---
 
+## Phase D6 — Purchase orders (folded into order-service) ✅ *(done 2026-09-03)*
+
+Not a new service — see the D2-merge decision below: purchase orders share order-service's
+outbox/idempotent-consumer machinery, so they're a new aggregate in the existing service,
+not a new pod.
+
+- [x] `PurchaseOrder` (purchaseOrderId, vendorId, skuNumber, quantity, warehouseId,
+      **purpose** `{STOCKING, BACKORDER, DIRECT}` — only `STOCKING` used this phase,
+      `BACKORDER`/`DIRECT` declared for D7/D9 — **status** `{PENDING, FULFILLED}`, no
+      `REJECTED`: the mock vendor always succeeds).
+- [x] `POST /api/purchase-orders` (ADMIN only) — resolves the sku's owning vendor via a
+      sync call to vendor-service, saves the PO, writes a `PurchaseOrderPlaced` outbox
+      event. Same transactional-outbox shape Phase 4 built for sales orders.
+- [x] `PurchaseOrderPlacedListener` — the "mock vendor": consumes `PurchaseOrderPlaced`
+      and immediately marks the PO fulfilled (idempotent via the existing
+      `ProcessedEvent` table), writing a `PurchaseOrderFulfilled` outbox event. No real
+      vendor system exists to call, so this is a deliberate simulation, stated plainly.
+- [x] `inventory-service`'s `PurchaseOrderFulfilledListener` — consumes the fulfilled
+      event, resolves `skuNumber → Product.id`, and calls the existing (Phase 1)
+      `InventoryService.addInventory` — purely additive, no changes to that machinery.
+- [x] `GET /api/purchase-orders` (ADMIN + VENDOR) — ADMIN sees every PO, VENDOR sees only
+      their own (`vendorId` from the JWT's business-id claim, never a client-supplied
+      query param — same pattern every other Part D ownership check uses).
+- [x] **Real integration bug found and fixed before it could bite**: inventory-service's
+      own Phase-1 `Product` (id/sku/name) is a separate table from vendor-service's much
+      richer `Product`, and nothing was syncing them — the fulfillment listener's
+      `sku → Product.id` lookup would have thrown `ProductNotFoundException` on the very
+      first real purchase order. Fixed by having `CatalogService.setSalePrice` (D5) also
+      upsert inventory-service's own `Product` row for a never-seen sku, fetching
+      `productName` from vendor-service. Caught by re-reading the D6 listener against
+      what D5 actually left behind — not by a test failure — before ever running it live.
+- [x] Gateway route: `/api/purchase-orders/**` added to order-service's existing route
+      predicate (not a new route entry — same service, same predicate list).
+
+**Exit:** met, verified live: admin placed a stocking PO against a real vendor sku; mock
+vendor fulfillment happened automatically; inventory-service's stock for that
+sku/warehouse increased; vendor saw the PO in their own `GET /api/purchase-orders`
+history and could not see another vendor's.
+
+---
+
 ## Resume discipline
 
 Claim a capability **only after it is implemented and tested.** Interviewers ask about
