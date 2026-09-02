@@ -92,6 +92,10 @@
   #timeline li:last-child { border-bottom: none; }
   .ts { color: var(--muted); font-size: 11px; }
 
+  #ordersTable td { padding: 6px 8px; border-bottom: 1px solid var(--border); }
+  #ordersTable tr:last-child td { border-bottom: none; }
+  #ordersTable td code { color: var(--accent); }
+
   pre {
     background: #0a0e17; border: 1px solid var(--border); border-radius: 6px;
     padding: 12px; font-size: 12px; overflow-x: auto; max-height: 220px;
@@ -195,14 +199,36 @@
     </div>
 
     <div class="step-block">
-      <div class="step-title"><span class="num">4</span>Look up any order</div>
+      <div class="step-title"><span class="num">4</span>Look up a specific order</div>
       <div class="row">
         <div class="field" style="width:340px;"><label>Order ID</label><input id="lookupOrderId" style="width:100%" placeholder="paste an orderId, e.g. from a previous run"></div>
         <button class="secondary" onclick="lookupOrder()">Check status</button>
-        <button class="secondary" onclick="listRecentOrders()">List recent orders</button>
       </div>
       <div id="lookupMsg" class="msg"></div>
       <pre id="lookupResult" style="margin-top:10px; display:none;"></pre>
+    </div>
+
+    <div class="step-block">
+      <div class="step-title"><span class="num">5</span>All orders</div>
+      <div class="row">
+        <button class="secondary" onclick="loadOrdersPage(0)">Load orders</button>
+        <button class="secondary" onclick="loadOrdersPage(ordersPage - 1)" id="prevPageBtn" disabled>&larr; Prev</button>
+        <span id="pageIndicator" class="msg" style="margin-top:0;"></span>
+        <button class="secondary" onclick="loadOrdersPage(ordersPage + 1)" id="nextPageBtn" disabled>Next &rarr;</button>
+      </div>
+      <div id="ordersListMsg" class="msg"></div>
+      <table id="ordersTable" style="display:none; width:100%; border-collapse:collapse; font-size:13px; margin-top:8px;">
+        <thead>
+          <tr style="text-align:left; color:var(--muted); font-size:12px;">
+            <th style="padding:6px 8px;">Order ID</th>
+            <th style="padding:6px 8px;">Customer</th>
+            <th style="padding:6px 8px;">Status</th>
+            <th style="padding:6px 8px;">Total</th>
+            <th style="padding:6px 8px;">Created</th>
+          </tr>
+        </thead>
+        <tbody id="ordersTableBody"></tbody>
+      </table>
     </div>
 
     <div class="log-title">Last request / response</div>
@@ -337,19 +363,48 @@
     }
   }
 
-  async function listRecentOrders() {
-    const el = document.getElementById('lookupMsg');
-    const out = document.getElementById('lookupResult');
+  let ordersPage = 0;
+  const ORDERS_PAGE_SIZE = 10;
+
+  async function loadOrdersPage(page) {
+    if (page < 0) return;
+
+    const el = document.getElementById('ordersListMsg');
+    const table = document.getElementById('ordersTable');
+    const tbody = document.getElementById('ordersTableBody');
 
     el.className = 'msg'; el.textContent = 'Loading…';
     try {
-      const orders = await callApi('GET', '/api/orders?page=0&size=10');
-      el.className = 'msg ok'; el.textContent = `Showing ${orders.length} most recent order(s)`;
-      out.style.display = 'block';
-      out.textContent = JSON.stringify(orders, null, 2);
+      const orders = await callApi('GET', `/api/orders?page=${page}&size=${ORDERS_PAGE_SIZE}`);
+      ordersPage = page;
+
+      if (orders.length === 0 && page > 0) {
+        // Ran past the end -- step back rather than show an empty page.
+        return loadOrdersPage(page - 1);
+      }
+
+      tbody.innerHTML = orders.map(o => `
+        <tr>
+          <td><code>${o.orderId}</code></td>
+          <td>${o.customerId}</td>
+          <td><span class="badge ${o.status}">${o.status}</span></td>
+          <td>${o.totalAmount}</td>
+          <td>${new Date(o.createdAt).toLocaleString()}</td>
+        </tr>`).join('');
+
+      table.style.display = orders.length ? 'table' : 'none';
+      el.className = 'msg'; el.textContent = orders.length
+        ? `Page ${page + 1} — ${orders.length} order(s)`
+        : 'No orders yet.';
+      document.getElementById('pageIndicator').textContent = `Page ${page + 1}`;
+      document.getElementById('prevPageBtn').disabled = page === 0;
+      // No total-count endpoint, so infer "more pages" from a full page rather than a
+      // count -- a short page is the only signal available that this is the last one.
+      document.getElementById('nextPageBtn').disabled = orders.length < ORDERS_PAGE_SIZE;
+
     } catch (e) {
       el.className = 'msg error'; el.textContent = 'Failed: ' + (e.body?.message || e.status || e);
-      out.style.display = 'none';
+      table.style.display = 'none';
     }
   }
 
