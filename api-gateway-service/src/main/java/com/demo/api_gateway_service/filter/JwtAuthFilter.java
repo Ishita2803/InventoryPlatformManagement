@@ -68,6 +68,18 @@ public class JwtAuthFilter extends OncePerRequestFilter {
         ROUTE_ROLES.put("POST /api/vendor/products/**", Set.of("VENDOR"));
         ROUTE_ROLES.put("PUT /api/vendor/products/**", Set.of("VENDOR"));
         ROUTE_ROLES.put("DELETE /api/vendor/products/**", Set.of("VENDOR"));
+
+        ROUTE_ROLES.put("POST /api/customer/onboard", Set.of("ADMIN"));
+        ROUTE_ROLES.put("GET /api/customer/customers/**", Set.of("ADMIN"));
+        // Every mutation and listing here is the customer managing their own addresses
+        // and end users -- no admin browsing need for these exists in the spec, unlike
+        // vendor products (which admin needs to see to place a purchase order against).
+        ROUTE_ROLES.put("POST /api/customer/addresses/**", Set.of("CUSTOMER"));
+        ROUTE_ROLES.put("GET /api/customer/addresses/**", Set.of("CUSTOMER"));
+        ROUTE_ROLES.put("DELETE /api/customer/addresses/**", Set.of("CUSTOMER"));
+        ROUTE_ROLES.put("POST /api/customer/end-users/**", Set.of("CUSTOMER"));
+        ROUTE_ROLES.put("GET /api/customer/end-users/**", Set.of("CUSTOMER"));
+        ROUTE_ROLES.put("DELETE /api/customer/end-users/**", Set.of("CUSTOMER"));
     }
 
     private static final AntPathMatcher PATH_MATCHER = new AntPathMatcher();
