@@ -45,6 +45,15 @@ public class Order {
     @Column(name = "customer_id", nullable = false, length = 64)
     private String customerId;
 
+    /**
+     * Nullable since Phase D7: only set for a sales order (one whose items carry a
+     * {@code skuNumber}), where it's the region the fulfillment search matches against a
+     * warehouse's own region (Phase D5). The legacy demo flow has no notion of a delivery
+     * region at all -- it takes an explicit {@code warehouseId} per line instead.
+     */
+    @Column(name = "delivery_region", length = 100)
+    private String deliveryRegion;
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 32)
     private OrderStatus status;

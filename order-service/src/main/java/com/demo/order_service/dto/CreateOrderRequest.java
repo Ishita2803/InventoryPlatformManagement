@@ -14,6 +14,13 @@ public class CreateOrderRequest {
     private String customerId;
 
     /**
+     * Only required for a Phase D7 sales order (any item carrying a {@code skuNumber}) --
+     * enforced in {@code SalesOrderService}, not here, for the same "one shape or the
+     * other" reason {@link OrderItemRequest} isn't annotated per-field either.
+     */
+    private String deliveryRegion;
+
+    /**
      * {@code @Valid} on the collection is what makes the per-item constraints run at all.
      * Without it an item with quantity -5 sails straight through.
      */

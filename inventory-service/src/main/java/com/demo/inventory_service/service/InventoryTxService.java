@@ -1,24 +1,31 @@
 package com.demo.inventory_service.service;
 
+import com.demo.inventory_service.dto.FulfillmentRequest;
+import com.demo.inventory_service.dto.FulfillmentResponse;
 import com.demo.inventory_service.dto.InventoryRequest;
 import com.demo.inventory_service.dto.InventoryResponse;
 import com.demo.inventory_service.dto.ProductRequest;
 import com.demo.inventory_service.dto.ReservationLine;
 import com.demo.inventory_service.dto.ReserveInventoryRequest;
 import com.demo.inventory_service.dto.ReserveOutcome;
+import com.demo.inventory_service.exception.CatalogItemNotFoundException;
 import com.demo.inventory_service.exception.DuplicateSkuException;
 import com.demo.inventory_service.exception.InsufficientInventoryException;
 import com.demo.inventory_service.exception.InventoryNotFoundException;
 import com.demo.inventory_service.exception.ProductNotFoundException;
+import com.demo.inventory_service.models.CatalogItem;
 import com.demo.inventory_service.models.Inventory;
 import com.demo.inventory_service.models.Product;
 import com.demo.inventory_service.models.ProcessedEvent;
 import com.demo.inventory_service.models.Reservation;
 import com.demo.inventory_service.models.ReservationStatus;
+import com.demo.inventory_service.models.Warehouse;
+import com.demo.inventory_service.repository.CatalogItemRepository;
 import com.demo.inventory_service.repository.InventoryRepository;
 import com.demo.inventory_service.repository.ProcessedEventRepository;
 import com.demo.inventory_service.repository.ProductRepository;
 import com.demo.inventory_service.repository.ReservationRepository;
+import com.demo.inventory_service.repository.WarehouseRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -49,6 +56,8 @@ public class InventoryTxService {
     private final InventoryRepository inventoryRepository;
     private final ReservationRepository reservationRepository;
     private final ProcessedEventRepository processedEventRepository;
+    private final CatalogItemRepository catalogItemRepository;
+    private final WarehouseRepository warehouseRepository;
 
     @Transactional
     public Product createProduct(ProductRequest request) {
@@ -138,27 +147,111 @@ public class InventoryTxService {
             );
         }
 
-        inventory.setAvailableQuantity(
-                inventory.getAvailableQuantity() - request.getQuantity()
-        );
-        inventory.setReservedQuantity(
-                inventory.getReservedQuantity() + request.getQuantity()
-        );
+        applyReservation(inventory, request.getOrderId(), request.getQuantity());
+
+        return toResponse(inventory);
+    }
+
+    /**
+     * The actual stock move a reservation makes, factored out so Phase D7's fulfillment
+     * search -- which reserves a caller-computed (already-known-available) quantity across
+     * several warehouses in one order -- can reuse it without duplicating the
+     * available/reserved bookkeeping {@link #reserve} already got right.
+     */
+    private void applyReservation(Inventory inventory, String orderId, int quantity) {
+
+        inventory.setAvailableQuantity(inventory.getAvailableQuantity() - quantity);
+        inventory.setReservedQuantity(inventory.getReservedQuantity() + quantity);
         inventoryRepository.save(inventory);
 
         Reservation reservation = new Reservation();
-        reservation.setOrderId(request.getOrderId());
-        reservation.setProductId(request.getProductId());
-        reservation.setWarehouseId(request.getWarehouseId());
-        reservation.setQuantity(request.getQuantity());
+        reservation.setOrderId(orderId);
+        reservation.setProductId(inventory.getProductId());
+        reservation.setWarehouseId(inventory.getWarehouseId());
+        reservation.setQuantity(quantity);
         reservation.setStatus(ReservationStatus.RESERVED);
 
         // saveAndFlush, not save: forces the @Version check and the unique-constraint check
         // to happen here rather than at commit, so the caller's retry loop sees a failure it
         // can actually act on instead of an exception thrown after the method returned.
         reservationRepository.saveAndFlush(reservation);
+    }
 
-        return toResponse(inventory);
+    /**
+     * Phase D7: search the requested region's warehouse first, then every other warehouse
+     * in registration order, greedily taking whatever is available from each until the
+     * requested quantity is met or warehouses run out. Unlike {@link #reserveOrder}, this
+     * never fails a line for being short -- "never reject" means the caller (order-service)
+     * decides what a shortfall means (a backorder), not this method.
+     *
+     * <p>Idempotent the same way {@link #reserve} is: if this order already holds a
+     * reservation for this sku's productId in a candidate warehouse, that warehouse is
+     * skipped (already accounted for by an earlier delivery), not double-reserved.
+     */
+    @Transactional
+    public FulfillmentResponse fulfillSalesOrderLine(FulfillmentRequest request) {
+
+        Product product = productRepository.findBySku(request.getSkuNumber())
+                .orElseThrow(() -> new ProductNotFoundException(
+                        "No inventory-service product registered for sku=" + request.getSkuNumber()));
+
+        CatalogItem catalogItem = catalogItemRepository.findBySkuNumber(request.getSkuNumber())
+                .orElseThrow(() -> new CatalogItemNotFoundException(request.getSkuNumber()));
+
+        List<Warehouse> ordered = orderedByRegionThenAge(request.getRegion());
+
+        if (ordered.isEmpty()) {
+            throw new IllegalArgumentException(
+                    "No warehouse is registered at all -- cannot fulfill sku=" + request.getSkuNumber());
+        }
+
+        int remaining = request.getQuantity();
+        List<FulfillmentResponse.Allocation> allocations = new ArrayList<>();
+
+        for (Warehouse warehouse : ordered) {
+
+            if (remaining <= 0) {
+                break;
+            }
+
+            boolean alreadyHeld = reservationRepository
+                    .findByOrderIdAndProductIdAndWarehouseId(
+                            request.getOrderId(), product.getId(), warehouse.getWarehouseId())
+                    .isPresent();
+
+            if (alreadyHeld) {
+                continue;
+            }
+
+            Optional<Inventory> maybeInventory = inventoryRepository
+                    .findByProductIdAndWarehouseId(product.getId(), warehouse.getWarehouseId());
+
+            if (maybeInventory.isEmpty() || maybeInventory.get().getAvailableQuantity() <= 0) {
+                continue;
+            }
+
+            Inventory inventory = maybeInventory.get();
+            int take = Math.min(inventory.getAvailableQuantity(), remaining);
+
+            applyReservation(inventory, request.getOrderId(), take);
+            allocations.add(new FulfillmentResponse.Allocation(warehouse.getWarehouseId(), take));
+            remaining -= take;
+        }
+
+        inventoryRepository.flush();
+        reservationRepository.flush();
+
+        int shipQuantity = request.getQuantity() - remaining;
+
+        return new FulfillmentResponse(
+                product.getId(), catalogItem.getSalePrice(), catalogItem.getUnitWeight(),
+                shipQuantity, remaining, allocations, ordered.get(0).getWarehouseId());
+    }
+
+    private List<Warehouse> orderedByRegionThenAge(String region) {
+        List<Warehouse> ordered = new ArrayList<>(warehouseRepository.findByRegionOrderByCreatedAtAsc(region));
+        ordered.addAll(warehouseRepository.findByRegionNotOrderByCreatedAtAsc(region));
+        return ordered;
     }
 
     /**

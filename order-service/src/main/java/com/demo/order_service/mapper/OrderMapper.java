@@ -59,7 +59,8 @@ public class OrderMapper {
                 order.getTotalAmount(),
                 items,
                 order.getCreatedAt(),
-                order.getUpdatedAt()
+                order.getUpdatedAt(),
+                order.getDeliveryRegion()
         );
     }
 
@@ -78,6 +79,7 @@ public class OrderMapper {
         return new OrderItemResponse(
                 item.getProductId(),
                 item.getWarehouseId(),
+                item.getSkuNumber(),
                 item.getQuantity(),
                 item.getUnitPrice(),
                 item.lineTotal()

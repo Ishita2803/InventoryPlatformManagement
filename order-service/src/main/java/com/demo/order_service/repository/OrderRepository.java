@@ -37,9 +37,17 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
      *
      * <p>Oldest first, so the orders that have been holding stock longest are freed first,
      * and a backlog larger than one batch still drains in a sensible order.
+     *
+     * <p>{@code deliveryRegion IS NULL} excludes Phase D7 sales orders. Those are set
+     * straight to {@code INVENTORY_RESERVED} synchronously at creation, outside the
+     * {@code OrderPlaced}/payment Saga this sweep exists to unstick, and Phase D8 hasn't
+     * built their own settlement path yet -- without this exclusion, a perfectly healthy
+     * sales order sitting at {@code INVENTORY_RESERVED} awaiting D8's invoicing would look
+     * identical to a genuinely stalled legacy order, and this sweep would eventually
+     * cancel it and release its stock out from under it.
      */
     @Query("SELECT o.orderId FROM Order o WHERE o.status = :status "
-            + "AND o.updatedAt < :threshold ORDER BY o.updatedAt ASC")
+            + "AND o.updatedAt < :threshold AND o.deliveryRegion IS NULL ORDER BY o.updatedAt ASC")
     List<String> findStuckOrderIds(@Param("status") OrderStatus status,
                                    @Param("threshold") Instant threshold,
                                    Pageable pageable);

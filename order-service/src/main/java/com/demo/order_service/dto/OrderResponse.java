@@ -17,6 +17,7 @@ public record OrderResponse(
         BigDecimal totalAmount,
         List<OrderItemResponse> items,
         Instant createdAt,
-        Instant updatedAt
+        Instant updatedAt,
+        String deliveryRegion
 ) {
 }

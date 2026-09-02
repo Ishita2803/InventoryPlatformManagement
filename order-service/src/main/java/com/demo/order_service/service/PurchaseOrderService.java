@@ -42,13 +42,25 @@ public class PurchaseOrderService {
      */
     @Transactional
     public PurchaseOrderResponse create(CreatePurchaseOrderRequest request) {
+        return create(request, PurchaseOrderPurpose.STOCKING);
+    }
+
+    /**
+     * Phase D7's auto-backorder reuses this exact mechanism with
+     * {@link PurchaseOrderPurpose#BACKORDER} instead of {@code STOCKING} -- same vendor
+     * resolution, same outbox event, same mock-vendor fulfillment. The only thing that
+     * differs is which flow decided a purchase order was needed: admin, directly, for
+     * STOCKING; {@code SalesOrderService}, automatically, for a sales order's shortfall.
+     */
+    @Transactional
+    public PurchaseOrderResponse create(CreatePurchaseOrderRequest request, PurchaseOrderPurpose purpose) {
 
         VendorServiceClient.VendorProduct vendorProduct =
                 vendorServiceClient.getProductBySku(request.getSkuNumber());
 
         PurchaseOrder purchaseOrder = purchaseOrderRepository.save(new PurchaseOrder(
                 vendorProduct.vendorId(), request.getSkuNumber(), request.getQuantity(),
-                request.getWarehouseId(), PurchaseOrderPurpose.STOCKING));
+                request.getWarehouseId(), purpose));
 
         outboxWriter.writePurchaseOrderPlaced(
                 purchaseOrder.getPurchaseOrderId(), purchaseOrder.getVendorId(),

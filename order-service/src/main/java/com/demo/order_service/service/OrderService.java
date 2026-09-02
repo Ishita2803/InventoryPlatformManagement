@@ -23,6 +23,7 @@ import java.util.List;
 public class OrderService {
 
     private final OrderTxService tx;
+    private final SalesOrderService salesOrderService;
 
     /**
      * Persists the order. The event is queued in the outbox by the same transaction.
@@ -36,8 +37,16 @@ public class OrderService {
      * <p>What that buys: the order and the intent to publish are atomic. What it costs: the
      * event is published a moment later, and possibly more than once — which is harmless,
      * because the consumers are idempotent.
+     *
+     * <p>Phase D7: a request whose items carry a {@code skuNumber} is a sales order, and is
+     * routed to {@link SalesOrderService} instead — a genuinely different flow (synchronous
+     * fulfillment search, never-reject, auto-backorder), not a variation on this one. See
+     * {@code SalesOrderService}'s class doc for why the two aren't unified.
      */
     public OrderResponse createOrder(CreateOrderRequest request) {
+        if (SalesOrderService.isSalesOrder(request)) {
+            return salesOrderService.create(request);
+        }
         return tx.create(request);
     }
 

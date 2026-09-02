@@ -1,21 +1,28 @@
 package com.demo.inventory_service.service;
 
+import com.demo.inventory_service.dto.FulfillmentRequest;
+import com.demo.inventory_service.dto.FulfillmentResponse;
 import com.demo.inventory_service.dto.InventoryRequest;
 import com.demo.inventory_service.dto.InventoryResponse;
 import com.demo.inventory_service.dto.ProductRequest;
 import com.demo.inventory_service.dto.ReserveInventoryRequest;
+import com.demo.inventory_service.exception.CatalogItemNotFoundException;
 import com.demo.inventory_service.exception.DuplicateSkuException;
 import com.demo.inventory_service.exception.InsufficientInventoryException;
 import com.demo.inventory_service.exception.InventoryNotFoundException;
 import com.demo.inventory_service.exception.ProductNotFoundException;
+import com.demo.inventory_service.models.CatalogItem;
 import com.demo.inventory_service.models.Inventory;
 import com.demo.inventory_service.models.Product;
 import com.demo.inventory_service.models.Reservation;
 import com.demo.inventory_service.models.ReservationStatus;
+import com.demo.inventory_service.models.Warehouse;
+import com.demo.inventory_service.repository.CatalogItemRepository;
 import com.demo.inventory_service.repository.InventoryRepository;
 import com.demo.inventory_service.repository.ProcessedEventRepository;
 import com.demo.inventory_service.repository.ProductRepository;
 import com.demo.inventory_service.repository.ReservationRepository;
+import com.demo.inventory_service.repository.WarehouseRepository;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -60,6 +67,12 @@ class InventoryTxServiceTest {
 
     @Mock
     private ProcessedEventRepository processedEventRepository;
+
+    @Mock
+    private CatalogItemRepository catalogItemRepository;
+
+    @Mock
+    private WarehouseRepository warehouseRepository;
 
     @InjectMocks
     private InventoryTxService txService;
@@ -234,11 +247,154 @@ class InventoryTxServiceTest {
                 .hasMessageContaining("SKU-1");
     }
 
+    @Test
+    @DisplayName("fulfillment: full stock in the region-matched warehouse ships in full, no shortfall")
+    void fulfillmentShipsInFullFromRegionMatchedWarehouse() {
+
+        Warehouse mumbai = warehouse("WH-MUMBAI", "MUMBAI");
+
+        when(productRepository.findBySku("SKU-1")).thenReturn(Optional.of(product()));
+        when(catalogItemRepository.findBySkuNumber("SKU-1")).thenReturn(Optional.of(catalogItem()));
+        when(warehouseRepository.findByRegionOrderByCreatedAtAsc("MUMBAI")).thenReturn(List.of(mumbai));
+        when(warehouseRepository.findByRegionNotOrderByCreatedAtAsc("MUMBAI")).thenReturn(List.of());
+        when(reservationRepository.findByOrderIdAndProductIdAndWarehouseId(ORDER_ID, PRODUCT_ID, "WH-MUMBAI"))
+                .thenReturn(Optional.empty());
+        when(inventoryRepository.findByProductIdAndWarehouseId(PRODUCT_ID, "WH-MUMBAI"))
+                .thenReturn(Optional.of(inventory("WH-MUMBAI", 10, 0)));
+
+        FulfillmentResponse response = txService.fulfillSalesOrderLine(fulfillmentRequest("MUMBAI", 4));
+
+        assertThat(response.shipQuantity()).isEqualTo(4);
+        assertThat(response.shortfall()).isZero();
+        assertThat(response.allocations()).hasSize(1);
+        assertThat(response.allocations().getFirst().warehouseId()).isEqualTo("WH-MUMBAI");
+        assertThat(response.allocations().getFirst().quantity()).isEqualTo(4);
+        assertThat(response.backorderWarehouseId()).isEqualTo("WH-MUMBAI");
+    }
+
+    @Test
+    @DisplayName("fulfillment: region warehouse short, fallback warehouse covers the rest, no shortfall")
+    void fulfillmentFallsBackToASecondWarehouse() {
+
+        Warehouse mumbai = warehouse("WH-MUMBAI", "MUMBAI");
+        Warehouse pune = warehouse("WH-PUNE", "PUNE");
+
+        when(productRepository.findBySku("SKU-1")).thenReturn(Optional.of(product()));
+        when(catalogItemRepository.findBySkuNumber("SKU-1")).thenReturn(Optional.of(catalogItem()));
+        when(warehouseRepository.findByRegionOrderByCreatedAtAsc("MUMBAI")).thenReturn(List.of(mumbai));
+        when(warehouseRepository.findByRegionNotOrderByCreatedAtAsc("MUMBAI")).thenReturn(List.of(pune));
+        when(reservationRepository.findByOrderIdAndProductIdAndWarehouseId(ORDER_ID, PRODUCT_ID, "WH-MUMBAI"))
+                .thenReturn(Optional.empty());
+        when(reservationRepository.findByOrderIdAndProductIdAndWarehouseId(ORDER_ID, PRODUCT_ID, "WH-PUNE"))
+                .thenReturn(Optional.empty());
+        when(inventoryRepository.findByProductIdAndWarehouseId(PRODUCT_ID, "WH-MUMBAI"))
+                .thenReturn(Optional.of(inventory("WH-MUMBAI", 3, 0)));
+        when(inventoryRepository.findByProductIdAndWarehouseId(PRODUCT_ID, "WH-PUNE"))
+                .thenReturn(Optional.of(inventory("WH-PUNE", 10, 0)));
+
+        FulfillmentResponse response = txService.fulfillSalesOrderLine(fulfillmentRequest("MUMBAI", 5));
+
+        assertThat(response.shipQuantity()).isEqualTo(5);
+        assertThat(response.shortfall()).isZero();
+        assertThat(response.allocations()).hasSize(2);
+        assertThat(response.allocations().get(0).warehouseId()).isEqualTo("WH-MUMBAI");
+        assertThat(response.allocations().get(0).quantity()).isEqualTo(3);
+        assertThat(response.allocations().get(1).warehouseId()).isEqualTo("WH-PUNE");
+        assertThat(response.allocations().get(1).quantity()).isEqualTo(2);
+    }
+
+    @Test
+    @DisplayName("fulfillment: no warehouse has enough stock -- ships what it can, reports the shortfall, never throws")
+    void fulfillmentReportsShortfallInsteadOfRejecting() {
+
+        Warehouse mumbai = warehouse("WH-MUMBAI", "MUMBAI");
+
+        when(productRepository.findBySku("SKU-1")).thenReturn(Optional.of(product()));
+        when(catalogItemRepository.findBySkuNumber("SKU-1")).thenReturn(Optional.of(catalogItem()));
+        when(warehouseRepository.findByRegionOrderByCreatedAtAsc("MUMBAI")).thenReturn(List.of(mumbai));
+        when(warehouseRepository.findByRegionNotOrderByCreatedAtAsc("MUMBAI")).thenReturn(List.of());
+        when(reservationRepository.findByOrderIdAndProductIdAndWarehouseId(ORDER_ID, PRODUCT_ID, "WH-MUMBAI"))
+                .thenReturn(Optional.empty());
+        when(inventoryRepository.findByProductIdAndWarehouseId(PRODUCT_ID, "WH-MUMBAI"))
+                .thenReturn(Optional.of(inventory("WH-MUMBAI", 2, 0)));
+
+        FulfillmentResponse response = txService.fulfillSalesOrderLine(fulfillmentRequest("MUMBAI", 5));
+
+        assertThat(response.shipQuantity()).isEqualTo(2);
+        assertThat(response.shortfall()).isEqualTo(3);
+        assertThat(response.allocations()).hasSize(1);
+        assertThat(response.backorderWarehouseId()).isEqualTo("WH-MUMBAI");
+    }
+
+    @Test
+    @DisplayName("fulfillment: no warehouse registered at all fails cleanly, distinct from a mere shortfall")
+    void fulfillmentWithNoWarehousesFailsCleanly() {
+
+        when(productRepository.findBySku("SKU-1")).thenReturn(Optional.of(product()));
+        when(catalogItemRepository.findBySkuNumber("SKU-1")).thenReturn(Optional.of(catalogItem()));
+        when(warehouseRepository.findByRegionOrderByCreatedAtAsc("MUMBAI")).thenReturn(List.of());
+        when(warehouseRepository.findByRegionNotOrderByCreatedAtAsc("MUMBAI")).thenReturn(List.of());
+
+        assertThatThrownBy(() -> txService.fulfillSalesOrderLine(fulfillmentRequest("MUMBAI", 5)))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    @DisplayName("fulfillment: unknown sku fails with ProductNotFound, same as the D6 fulfillment listener would hit")
+    void fulfillmentUnknownSkuFailsCleanly() {
+
+        when(productRepository.findBySku("SKU-1")).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> txService.fulfillSalesOrderLine(fulfillmentRequest("MUMBAI", 5)))
+                .isInstanceOf(ProductNotFoundException.class);
+    }
+
+    @Test
+    @DisplayName("fulfillment: sku with no catalog price fails with CatalogItemNotFound")
+    void fulfillmentUnknownCatalogItemFailsCleanly() {
+
+        when(productRepository.findBySku("SKU-1")).thenReturn(Optional.of(product()));
+        when(catalogItemRepository.findBySkuNumber("SKU-1")).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> txService.fulfillSalesOrderLine(fulfillmentRequest("MUMBAI", 5)))
+                .isInstanceOf(CatalogItemNotFoundException.class);
+    }
+
+    private Warehouse warehouse(String warehouseId, String region) {
+        return new Warehouse(warehouseId, "Some location", region);
+    }
+
+    private Product product() {
+        Product product = new Product();
+        product.setId(PRODUCT_ID);
+        product.setSku("SKU-1");
+        product.setName("Widget");
+        return product;
+    }
+
+    private CatalogItem catalogItem() {
+        return new CatalogItem("SKU-1", "VENDOR-1",
+                new java.math.BigDecimal("1.500"), new java.math.BigDecimal("70.00"));
+    }
+
+    private FulfillmentRequest fulfillmentRequest(String region, int quantity) {
+        FulfillmentRequest request = new FulfillmentRequest();
+        request.setSkuNumber("SKU-1");
+        request.setRegion(region);
+        request.setQuantity(quantity);
+        request.setOrderId(ORDER_ID);
+        return request;
+    }
+
     private Inventory inventory(int available, int reserved) {
+        return inventory(WAREHOUSE_ID, available, reserved);
+    }
+
+    private Inventory inventory(String warehouseId, int available, int reserved) {
         Inventory inventory = new Inventory();
         inventory.setId(1L);
         inventory.setProductId(PRODUCT_ID);
-        inventory.setWarehouseId(WAREHOUSE_ID);
+        inventory.setWarehouseId(warehouseId);
         inventory.setAvailableQuantity(available);
         inventory.setReservedQuantity(reserved);
         return inventory;

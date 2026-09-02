@@ -1,5 +1,7 @@
 package com.demo.inventory_service.service;
 
+import com.demo.inventory_service.dto.FulfillmentRequest;
+import com.demo.inventory_service.dto.FulfillmentResponse;
 import com.demo.inventory_service.dto.InventoryRequest;
 import com.demo.inventory_service.dto.InventoryResponse;
 import com.demo.inventory_service.dto.ProductRequest;
@@ -75,6 +77,19 @@ public class InventoryService {
         return withOptimisticLockRetry(
                 () -> tx.reserveOrder(eventId, orderId, lines),
                 "reserveOrder orderId=" + orderId + " eventId=" + eventId
+        );
+    }
+
+    /**
+     * Phase D7's fulfillment search. Wrapped in the same retry as every other mutation here
+     * -- the loop reserves against a live snapshot of several warehouses' stock, and losing
+     * an optimistic-lock race on any one of them means re-reading all of them, not just the
+     * one that lost.
+     */
+    public FulfillmentResponse fulfillSalesOrderLine(FulfillmentRequest request) {
+        return withOptimisticLockRetry(
+                () -> tx.fulfillSalesOrderLine(request),
+                "fulfillSalesOrderLine orderId=" + request.getOrderId() + " sku=" + request.getSkuNumber()
         );
     }
 

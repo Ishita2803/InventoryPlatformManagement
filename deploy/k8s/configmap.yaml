@@ -22,4 +22,8 @@ data:
   PAYMENT_BASE_URL: "http://payment-service:8084"
   AUTH_BASE_URL: "http://auth-service:8085"
   VENDOR_BASE_URL: "http://vendor-service:8086"
+  # Phase D7: order-service's sales-order fulfillment search calls inventory-service
+  # directly, never through the gateway -- same boundary every other cross-service client
+  # in this project already relies on.
+  INVENTORY_BASE_URL: "http://inventory-service:8082"
   SPRING_PROFILES_ACTIVE: "k8s"
