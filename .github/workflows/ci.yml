@@ -183,5 +183,12 @@ jobs:
       # Fails the job if the rollout doesn't reach Ready within the timeout -- readiness
       # probes are what gate this, so a bad image (e.g. one that can't reach config-service)
       # surfaces here as a failed deploy, not as a silent bad rollout discovered later.
+      #
+      # 300s, not 180s. The matrix runs all 6 services' rollouts roughly concurrently, and
+      # Phase 15 already found these e2-medium nodes have very little spare CPU headroom --
+      # 6 simultaneous JVM cold starts competing for it measurably slows each one down. The
+      # first live run timed out at 180s on order-service and inventory-service specifically
+      # while they were still starting (0 container restarts, not crash-looping) and both
+      # reached Ready shortly after the CI job itself had already given up and failed.
       - name: Wait for rollout to complete
-        run: kubectl rollout status deployment/${{ matrix.service }} -n default --timeout=180s
+        run: kubectl rollout status deployment/${{ matrix.service }} -n default --timeout=300s
