@@ -194,6 +194,17 @@
       </div>
     </div>
 
+    <div class="step-block">
+      <div class="step-title"><span class="num">4</span>Look up any order</div>
+      <div class="row">
+        <div class="field" style="width:340px;"><label>Order ID</label><input id="lookupOrderId" style="width:100%" placeholder="paste an orderId, e.g. from a previous run"></div>
+        <button class="secondary" onclick="lookupOrder()">Check status</button>
+        <button class="secondary" onclick="listRecentOrders()">List recent orders</button>
+      </div>
+      <div id="lookupMsg" class="msg"></div>
+      <pre id="lookupResult" style="margin-top:10px; display:none;"></pre>
+    </div>
+
     <div class="log-title">Last request / response</div>
     <pre id="log">Nothing sent yet.</pre>
   </section>
@@ -275,6 +286,8 @@
       const order = await callApi('POST', '/api/orders', body);
       msg.className = 'msg ok'; msg.textContent = `Order placed: ${order.orderId}`;
 
+      document.getElementById('lookupOrderId').value = order.orderId;
+
       const panel = document.getElementById('statusPanel');
       panel.style.display = 'block';
       document.getElementById('orderIdShown').textContent = order.orderId;
@@ -298,6 +311,45 @@
 
     } catch (e) {
       msg.className = 'msg error'; msg.textContent = 'Failed: ' + (e.body?.message || JSON.stringify(e.body) || e.status);
+    }
+  }
+
+  async function lookupOrder() {
+    const el = document.getElementById('lookupMsg');
+    const out = document.getElementById('lookupResult');
+    const orderId = document.getElementById('lookupOrderId').value.trim();
+
+    if (!orderId) {
+      el.className = 'msg error'; el.textContent = 'Enter an order ID first.';
+      out.style.display = 'none';
+      return;
+    }
+
+    el.className = 'msg'; el.textContent = 'Looking up…';
+    try {
+      const order = await callApi('GET', `/api/orders/${orderId}`);
+      el.className = 'msg ok'; el.textContent = `Status: ${order.status}`;
+      out.style.display = 'block';
+      out.textContent = JSON.stringify(order, null, 2);
+    } catch (e) {
+      el.className = 'msg error'; el.textContent = 'Failed: ' + (e.body?.message || e.status || e);
+      out.style.display = 'none';
+    }
+  }
+
+  async function listRecentOrders() {
+    const el = document.getElementById('lookupMsg');
+    const out = document.getElementById('lookupResult');
+
+    el.className = 'msg'; el.textContent = 'Loading…';
+    try {
+      const orders = await callApi('GET', '/api/orders?page=0&size=10');
+      el.className = 'msg ok'; el.textContent = `Showing ${orders.length} most recent order(s)`;
+      out.style.display = 'block';
+      out.textContent = JSON.stringify(orders, null, 2);
+    } catch (e) {
+      el.className = 'msg error'; el.textContent = 'Failed: ' + (e.body?.message || e.status || e);
+      out.style.display = 'none';
     }
   }
 
