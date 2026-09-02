@@ -968,6 +968,12 @@ correctly-claimed JWT; `/auth/me` returns 401 with no token, 401 with a garbage 
 **Not met for tracing** — carried forward as this phase's first remaining task before D2
 starts, per this project's own rule that a phase isn't done until its exit criteria pass.
 
+**Known gap, not yet closed:** `auth-service` is not wired into the root
+`docker-compose.yml` for local dev — it only runs on GKE today. Local Compose parity
+(a datasource pointed at one of the existing local MySQL containers plus `JWT_SECRET` in
+`.env.example`) is a small, separate task, deliberately deferred rather than rushed
+alongside everything else this phase touched.
+
 ---
 
 ## Resume discipline
