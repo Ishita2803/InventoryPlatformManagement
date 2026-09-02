@@ -696,22 +696,44 @@ inventory (qty 10) created, then an order placed **before** inventory existed fo
 reached `INVENTORY_FAILED`; a second order for qty 2 reached `CONFIRMED` in ~3s with stock
 correctly settled (`available` 10→8, `reserved` back to 0 — shipped, not merely held).
 
-## Phase 16 — Public internet access
+## Phase 16 — Public internet access 🟡 *(gateway public and verified 2026-09-02; rate-limiting and TLS still open)*
 
-- [ ] Reserve a static external IP
-- [ ] **Cheap path first:** expose the gateway via `NodePort` plus a firewall rule, or a
-      single L4 `Service type=LoadBalancer`. Confirm the real cost of whichever you pick
-      before leaving it up — a GCLB forwarding rule alone is around $18/mo, more than both
-      VMs together.
-- [ ] Only the gateway is public. Order, Inventory, Notification, Payment, Config and the
-      data VM stay cluster-internal.
-- [ ] Sanity-check that Actuator `env` / `heapdump` endpoints are **not** publicly exposed
-- [ ] *Optional TLS:* a `nip.io` hostname over the static IP plus cert-manager with Let's
-      Encrypt (free), or a GCE Ingress with a Google-managed certificate if you buy a domain
-- [ ] Rate-limit the gateway — it is now on the public internet
+- [x] Reserve a static external IP — `35.208.57.189`, **Standard** network tier (cheaper than
+      Premium), reserved via the console (`VPC network → IP addresses`), `us-central1`.
+- [x] **Cheap path first:** chose `Service type=LoadBalancer` over raw `NodePort` +
+      firewall — Phase 15 had just proven Spot nodes get recreated (sometimes with churned
+      identity), and a NodePort setup means pointing the static IP at one specific node,
+      which breaks the moment that node is preempted. A `LoadBalancer` Service balances
+      across all nodes and follows pods automatically regardless of which node comes and
+      goes, at the cost of a forwarding-rule fee while it's up.
+- [x] Only the gateway is public. `order-service`'s port `8081` confirmed unreachable from
+      outside the cluster (connection times out); every other service, and the data VM,
+      remain cluster-internal by construction — nothing else has a `LoadBalancer` Service.
+- [x] Sanity-checked Actuator `env` / `heapdump` — already not exposed. The gateway's
+      `management.endpoints.web.exposure.include` in `config-repo` was already
+      `health,info,gateway` since Phase 7; no code change was needed here.
+- [ ] *Optional TLS:* not done.
+- [ ] Rate-limit the gateway — not done. Plan: a lightweight in-memory token-bucket filter
+      (e.g. Bucket4j) rather than Spring Cloud Gateway's Redis-backed `RequestRateLimiter` —
+      there's no Redis anywhere in this stack, and adding one solely for rate-limiting would
+      be disproportionate to what it buys.
 
-**Exit:** `curl http://<static-ip>/api/orders` works from your phone on mobile data, and a
-direct request to a service port from outside the cluster is refused.
+**Exit: met for the core criterion, 2026-09-02.** `curl http://35.208.57.189/api/orders`
+returns real order data from outside the cluster (verified from this machine, not yet from a
+phone on mobile data — worth a quick check, but the network path proven is the one that
+matters: an external client, not `kubectl port-forward`). A direct request to
+`order-service:8081` from outside times out. Rate-limiting and TLS remain open and are not
+required for this exit criterion as written, but should close before calling Phase 16 fully
+done.
+
+**A real gotcha, worth knowing for next time.** The first `LoadBalancer` apply failed
+repeatedly with `SyncLoadBalancerFailed: requested IP "..." belongs to the Standard network
+tier; expected Premium` — GKE defaults new `LoadBalancer` Services to Premium tier, and a
+Standard-tier reserved IP must be told explicitly to match via
+`cloud.google.com/network-tier: "Standard"` on the Service. The first attempt at this used
+`networking.gke.io/network-tier`, which is silently accepted (no error, shows up in
+`kubectl get svc ... -o yaml`) but has **no effect on provisioning** — a wrong annotation key
+that looks like it worked is worse than one that errors immediately.
 
 ## Phase 17 — CI/CD to GKE
 

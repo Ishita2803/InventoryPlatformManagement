@@ -48,9 +48,21 @@ kind: Service
 metadata:
   name: api-gateway-service
   namespace: default
+  annotations:
+    # The reserved static IP (35.208.57.189) is Standard network tier -- GKE defaults new
+    # LoadBalancer Services to Premium tier, and the two must match or the forwarding rule
+    # never provisions ("belongs to the Standard network tier; expected Premium"). The
+    # correct annotation key is cloud.google.com/network-tier, not networking.gke.io/... --
+    # the latter applied without error but was silently ignored (no effect on provisioning).
+    cloud.google.com/network-tier: "Standard"
 spec:
+  type: LoadBalancer
+  # Replace with the static IP reserved in the console (VPC network > IP addresses),
+  # region us-central1, Standard network tier -- GKE's external LB then binds to it
+  # instead of an ephemeral address that would change on every recreation.
+  loadBalancerIP: "35.208.57.189"
   selector:
     app: api-gateway-service
   ports:
-    - port: 8080
+    - port: 80
       targetPort: 8080

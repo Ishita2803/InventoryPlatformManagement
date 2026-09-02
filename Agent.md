@@ -567,6 +567,37 @@ A 200 with **empty** `propertySources` means the filename doesn't match
 
 Newest first. Add an entry for every meaningful change.
 
+### 2026-09-02 — Phase 16 started: gateway public via a static IP, LoadBalancer over NodePort
+- **Reserved a Standard-tier static external IP** (`35.208.57.189`, `us-central1`) via the
+  console, and changed `api-gateway-service`'s k8s `Service` from implicit `ClusterIP` to
+  `type: LoadBalancer` with `loadBalancerIP: "35.208.57.189"`, external port `80` → pod
+  `8080` (so the exit criterion's `curl http://<ip>/api/orders` needs no port suffix).
+- **Chose `LoadBalancer` over raw `NodePort` + firewall, deliberately.** `plan.md` offered
+  both as "cheap path" options. NodePort means pointing the static IP at one specific node's
+  external interface; Phase 15 had just proven (deliberately, via a simulated preemption)
+  that Spot nodes get destroyed and recreated. A `LoadBalancer` Service balances across every
+  node in the pool and keeps working regardless of which node comes or goes — the node-level
+  fragility NodePort would have was already demonstrated, not hypothetical.
+- **Real bug: the reserved IP's network tier didn't match the LoadBalancer's default.**
+  `SyncLoadBalancerFailed: requested IP "..." belongs to the Standard network tier; expected
+  Premium` — GKE provisions `LoadBalancer` Services as Premium tier unless told otherwise. Fix
+  is the annotation `cloud.google.com/network-tier: "Standard"`. **First attempt used the
+  wrong key**, `networking.gke.io/network-tier` — it applied with no error and appeared in
+  `kubectl get svc -o yaml` exactly like a working annotation, but silently had zero effect
+  on provisioning. Cost real time because a silently-accepted-but-ignored annotation gives no
+  signal that anything is wrong; only re-checking the *provisioning* error (not the applied
+  manifest) revealed it was still failing for the same reason.
+- **Verified from outside the cluster, not just `kubectl port-forward`:**
+  `curl http://35.208.57.189/api/orders` returns real order data; a direct request to
+  `order-service`'s port `8081` on the same IP times out — only the gateway is reachable.
+  Actuator's `env`/`heapdump` were already unexposed since Phase 7
+  (`management.endpoints.web.exposure.include: health,info,gateway`), so no code change was
+  needed for that checklist item.
+- **Still open:** rate-limiting the gateway (planned: an in-memory Bucket4j filter, not
+  Spring Cloud Gateway's Redis-backed `RequestRateLimiter` — no Redis exists in this stack)
+  and optional TLS. Also worth doing: re-run the `curl` check from an actual phone on mobile
+  data, since everything verified so far was from this machine.
+
 ### 2026-09-02 — Phase 15: last two checklist items closed (one was already done, one newly verified)
 - **`MaxRAMPercentage` was already correctly set — the earlier "still open" note in this file
   and in `plan.md` was wrong.** It was written on the assumption that no `JAVA_OPTS` value
