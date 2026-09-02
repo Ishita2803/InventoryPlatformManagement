@@ -653,7 +653,7 @@ password default, committed in git.
 **Exit (deferred to Phase 15):** a pod reads its DB password from Secret Manager, `git grep -i password` in
 `config-repo` finds only placeholders, and the old credential is revoked.
 
-## Phase 15 — GKE cluster and manifests 🟡 *(cluster + connectivity + Workload Identity done 2026-09-01)*
+## Phase 15 — GKE cluster and manifests 🟡 *(manifests deployed, all 6 pods Running/Ready 2026-09-02; JVM heap sizing and Spot-preemption test still open)*
 
 - [x] **First, verify Phase 13's deferred exit criterion:** from a throwaway pod, confirm
       `mysql` connects to both schemas on the data VM and a Kafka console producer/consumer
@@ -665,12 +665,19 @@ password default, committed in git.
       clusters update --workload-pool=...` then `node-pools update
       --workload-metadata=GKE_METADATA`, which recreates every node) — deferred from Phase 14
       since it needs a cluster to exist first
-- [ ] `deploy/k8s/` — per service: `Deployment`, `Service`, liveness/readiness probes on
-      Actuator, resource requests **and** limits, `ConfigMap` for non-secret env
-- [ ] **Do not deploy `discovery-service`.** Add a `k8s` Spring profile that switches the
-      gateway to Service-DNS routes and disables the Eureka client.
-- [ ] Deploy `config-service` in-cluster; clients point at `http://config-service:8888`
-- [ ] Set each JVM's `MaxRAMPercentage` against the **pod limit**, not the node size
+- [x] `deploy/k8s/` — per service: `Deployment`, `Service`, liveness/readiness probes on
+      Actuator, resource requests **and** limits, `ConfigMap` for non-secret env. Node pool
+      max bumped 3→4 (`e2-medium` Spot) — the original 3-node cap left no allocatable CPU
+      for two pods once GKE's own addons (logging, monitoring, CSI driver, etc.) are
+      accounted for; see Agent.md §10, 2026-09-02.
+- [x] **Do not deploy `discovery-service`.** Added a `k8s` Spring profile that switches the
+      gateway to Service-DNS routes and disables the Eureka client — confirmed live via the
+      gateway's boot log (`The following 1 profile is active: "k8s"`).
+- [x] Deploy `config-service` in-cluster; clients point at `http://config-service:8888` —
+      confirmed via client boot logs (`Fetching config from server at :
+      http://config-service:8888`).
+- [ ] Set each JVM's `MaxRAMPercentage` against the **pod limit**, not the node size.
+      Not yet done — no `JAVA_OPTS` value is defined anywhere in the manifests or ConfigMap.
 - [ ] Verify pods survive a Spot preemption — that is the trade-off you're buying
 
 **Exit:** all pods `Running` and `Ready`; a `kubectl port-forward` to the gateway runs the

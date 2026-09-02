@@ -20,6 +20,14 @@ spec:
       containers:
         - name: order-service
           image: us-central1-docker.pkg.dev/inventorymanagement-507107/order-platform-repo/order-service:204439c
+          # The Secret Manager CSI driver's own service account lacks cluster-scope RBAC to
+          # list/watch Secrets, so secretObjects (mirroring the mount into a native k8s
+          # Secret for secretKeyRef) never succeeds -- a gap in the GKE-managed component,
+          # not something fixable here. The volume mount itself works, so read the file
+          # directly instead of depending on that sync.
+          command: ["sh", "-c"]
+          args:
+            - export MYSQL_PASSWORD="$(cat /mnt/secrets-store/order/mysql-order-password)" && exec java $JAVA_OPTS org.springframework.boot.loader.launch.JarLauncher
           ports:
             - containerPort: 8081
           envFrom:
@@ -28,15 +36,10 @@ spec:
           env:
             - name: MYSQL_USER
               value: "order_app"
-            - name: MYSQL_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: mysql-order-password
-                  key: password
           resources:
             requests:
               memory: "768Mi"
-              cpu: "250m"
+              cpu: "100m"
             limits:
               memory: "768Mi"
               cpu: "750m"
@@ -59,7 +62,7 @@ spec:
       volumes:
         - name: mysql-order-password
           csi:
-            driver: secrets-store.csi.k8s.io
+            driver: secrets-store-gke.csi.k8s.io
             readOnly: true
             volumeAttributes:
               secretProviderClass: mysql-order-password

@@ -567,6 +567,62 @@ A 200 with **empty** `propertySources` means the filename doesn't match
 
 Newest first. Add an entry for every meaningful change.
 
+### 2026-09-02 — Phase 15: all six pods running; CSI driver workaround; node pool bumped to 4
+- **`deploy/k8s/` manifests deployed and all pods `Running`/`Ready`**: config-service,
+  order-service, inventory-service, payment-service, notification-service,
+  api-gateway-service. `discovery-service` correctly not deployed; the gateway logs confirm
+  `k8s` profile active and `config-service` in-cluster is reachable at
+  `http://config-service:8888`.
+- **The Secret Manager CSI driver's `secretObjects` sync does not work on GKE Standard.**
+  That field is supposed to mirror a mounted secret into a native Kubernetes `Secret` so
+  `env.valueFrom.secretKeyRef` can reference it. It never completes — the driver's own
+  service account (`system:serviceaccount:kube-system:secrets-store-csi-driver-gke`) lacks
+  cluster-scope RBAC to list/watch `Secret` objects, confirmed via `"secrets is forbidden
+  ... at the cluster scope"` in the driver's logs and `FailedToCreateSecret` on the pod. This
+  is a gap in the GKE-managed component, not fixable by editing our own RBAC. **Worked
+  around**: `order-service` and `inventory-service` no longer use `secretKeyRef` at all;
+  their container `command`/`args` `cat` the mounted secret file directly
+  (`/mnt/secrets-store/{order,inventory}/mysql-*-password`) and `export MYSQL_PASSWORD`
+  before `exec`-ing the JAR. The volume mount itself works fine — only the
+  mount-to-native-Secret sync is broken.
+- **Also fixed:** the CSI driver name in the `SecretProviderClass` volume spec was wrong —
+  GKE's managed driver registers as `secrets-store-gke.csi.k8s.io`, not the upstream
+  `secrets-store.csi.k8s.io`. Using the upstream name meant the volume never mounted.
+- **`api-gateway-service` and `notification-service` stuck `Pending` for 6+ hours** —
+  `FailedScheduling: Insufficient cpu` on two of three nodes, `Insufficient memory` on the
+  third, and the autoscaler logged `NotTriggerScaleUp: max node group size reached`. Root
+  cause: **`e2-medium` nodes only expose ~940m of their 2000m CPU as allocatable** — GKE's
+  own addons (`csi-secrets-store-gke`, `fluentbit-gke` logging, GMP monitoring
+  (`collector`/`gmp-operator`/`kube-state-metrics`), `konnectivity-agent`,
+  `node-local-dns`, `netd`, `pdcsi-node`, `gke-metadata-server`) were consuming 800–930m of
+  that on two of the three nodes, leaving no room for even one more 50m app pod — this was
+  not fixable by trimming our own five services' CPU requests further (already at 350m
+  total across all five). Trimmed CPU requests anyway as a first attempt (order/inventory
+  250m→100m, the other three 100m→50m) — did not resolve it alone.
+  **Fixed** by bumping the node pool's `--max-nodes` from 3 to 4
+  (`gcloud container clusters update ... --node-pool default-pool --enable-autoscaling
+  --min-nodes 1 --max-nodes 4`); the autoscaler added a 4th Spot `e2-medium` within a couple
+  of minutes and both pods scheduled onto it immediately. **Cost impact:** an extra Spot
+  `e2-medium` node when the pool is scaled up, roughly +$5/mo over the Phase-12 estimate if
+  ever left running at 4 nodes continuously — Phase 18's teardown still scales to zero.
+- **Investigated, then left alone as already-correct:** `inventory-service` showed 7
+  restarts. Root cause was the documented, deliberate design already recorded in
+  `order-service.yaml`'s header comment — no Kubernetes equivalent of Compose's
+  `depends_on: service_healthy`, so a pod starting before `config-service` is reachable
+  fails fast (`ResourceAccessException: Connection refused` fetching
+  `http://config-service:8888/...`) and Kubernetes restarts it with backoff until it
+  succeeds. Confirmed this is exactly what happened: `config-service`'s pod first became
+  `Running` at `19:40:43`; `inventory-service`'s crash loop ended and it has run clean since
+  `19:42:36`. Considered adding an init container to gate startup on `config-service`'s
+  health endpoint and explicitly decided against it — reverses a decision already made and
+  documented, and the existing behavior (slower boot, but correct once it succeeds) was an
+  accepted trade-off, not an oversight.
+- **Still open in Phase 15:** JVM `-XX:MaxRAMPercentage` is not yet set against the pod's
+  resource limit (no `JAVA_OPTS` value is defined anywhere — the `$JAVA_OPTS` reference in
+  the `command`/`args` workaround above currently expands to nothing), and Spot-preemption
+  survival is unverified. Manifest changes from this session are staged but **not yet
+  committed** as of this entry.
+
 ### 2026-09-01 — Phase 15 started: cluster created, Phase 13's deferred exit criterion verified
 - **`order-platform-cluster`** created: GKE Standard, zonal (`us-central1-a`), default
   network/subnet, Spot `e2-medium` node pool, autoscaling 1-3.
