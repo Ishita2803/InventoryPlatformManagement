@@ -14,6 +14,7 @@ import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
+import org.springframework.util.AntPathMatcher;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import javax.crypto.SecretKey;
@@ -21,6 +22,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.Collections;
 import java.util.Enumeration;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Set;
@@ -46,14 +48,29 @@ public class JwtAuthFilter extends OncePerRequestFilter {
     private static final String BEARER_PREFIX = "Bearer ";
 
     /**
-     * Path -> roles allowed to call it. An empty set means "any authenticated role."
-     * Checked by exact match first (this project has no nested wildcard needs yet); a
-     * real {@code AntPathMatcher} can replace this if a future phase needs
-     * {@code /api/vendor/**}-style prefix matching.
+     * "METHOD PATTERN" -> roles allowed to call it. An empty set means "any authenticated
+     * role." A pattern ending in {@code /**} is matched via {@link AntPathMatcher};
+     * everything else is an exact match. Checked in map order, first match wins.
+     * Method-specific entries let GET be open to more roles than a mutation on the same
+     * path (browsing a vendor's products vs. editing them, say).
      */
-    private static final Map<String, Set<String>> ROUTE_ROLES = Map.of(
-            "/auth/me", Set.of() // any role, just needs to be a valid token
-    );
+    private static final Map<String, Set<String>> ROUTE_ROLES = new LinkedHashMap<>();
+
+    static {
+        ROUTE_ROLES.put("GET /auth/me", Set.of()); // any role, just needs to be a valid token
+        ROUTE_ROLES.put("POST /api/vendor/onboard", Set.of("ADMIN"));
+        ROUTE_ROLES.put("GET /api/vendor/vendors/**", Set.of("ADMIN"));
+        // Admin can browse any vendor's catalog (needed to place a purchase order
+        // against it, Phase D6) but never mutate one -- only the owning vendor can, and
+        // vendor-service's own ownership check (ProductService.requireOwned) is the
+        // second line of defence against a vendor mutating another vendor's product.
+        ROUTE_ROLES.put("GET /api/vendor/products/**", Set.of("VENDOR", "ADMIN"));
+        ROUTE_ROLES.put("POST /api/vendor/products/**", Set.of("VENDOR"));
+        ROUTE_ROLES.put("PUT /api/vendor/products/**", Set.of("VENDOR"));
+        ROUTE_ROLES.put("DELETE /api/vendor/products/**", Set.of("VENDOR"));
+    }
+
+    private static final AntPathMatcher PATH_MATCHER = new AntPathMatcher();
 
     private final SecretKey key;
 
@@ -66,7 +83,7 @@ public class JwtAuthFilter extends OncePerRequestFilter {
                                      HttpServletResponse response,
                                      FilterChain chain) throws ServletException, IOException {
 
-        Set<String> allowedRoles = ROUTE_ROLES.get(request.getRequestURI());
+        Set<String> allowedRoles = matchRoute(request.getMethod(), request.getRequestURI());
 
         if (allowedRoles == null) {
             // Not a gated route -- pass through exactly as before Part D existed.
@@ -100,6 +117,24 @@ public class JwtAuthFilter extends OncePerRequestFilter {
         } catch (JwtException | IllegalArgumentException invalid) {
             unauthorized(response, "Invalid or expired token");
         }
+    }
+
+    /** Returns null for "not gated". */
+    private Set<String> matchRoute(String method, String requestUri) {
+        for (Map.Entry<String, Set<String>> entry : ROUTE_ROLES.entrySet()) {
+            String[] methodAndPattern = entry.getKey().split(" ", 2);
+            if (!methodAndPattern[0].equals(method)) {
+                continue;
+            }
+            String pattern = methodAndPattern[1];
+            boolean matches = pattern.endsWith("/**")
+                    ? PATH_MATCHER.match(pattern, requestUri)
+                    : pattern.equals(requestUri);
+            if (matches) {
+                return entry.getValue();
+            }
+        }
+        return null;
     }
 
     private void unauthorized(HttpServletResponse response, String message) throws IOException {

@@ -41,6 +41,7 @@ jobs:
           - notification-service
           - payment-service
           - auth-service
+          - vendor-service
 
     steps:
       - uses: actions/checkout@v4
@@ -128,6 +129,7 @@ jobs:
           - notification-service
           - payment-service
           - auth-service
+          - vendor-service
 
     env:
       PROJECT_ID: inventorymanagement-507107

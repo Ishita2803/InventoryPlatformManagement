@@ -13,5 +13,8 @@ data:
   # A second schema on the SAME instance as ORDER_DB_URL (order-mysql), not a third
   # MySQL container -- auth-service's data is a handful of credential rows.
   AUTH_DB_URL: "jdbc:mysql://10.128.0.2:3306/auth_db"
+  # A second schema on the SAME instance as INVENTORY_DB_URL (inventory-mysql).
+  VENDOR_DB_URL: "jdbc:mysql://10.128.0.2:3307/vendor_db"
   PAYMENT_BASE_URL: "http://payment-service:8084"
+  AUTH_BASE_URL: "http://auth-service:8085"
   SPRING_PROFILES_ACTIVE: "k8s"
