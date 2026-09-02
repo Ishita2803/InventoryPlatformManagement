@@ -647,7 +647,7 @@ not two.
 | Not built | Phase |
 |---|---|
 | README, ADRs, OpenAPI, **any throughput benchmark** | 11 |
-| Rate-limiting on the gateway, TLS, CI/CD to GKE | 16–17 |
+| TLS, CI/CD to GKE | 16–17 |
 
 **One thing that is genuinely broken right now, and say so if the saga comes up:** three
 orders are permanently stuck at `INVENTORY_RESERVED` holding stock. The `processed_event` row
