@@ -78,6 +78,13 @@ public class JwtAuthFilter extends OncePerRequestFilter {
         ROUTE_ROLES.put("GET /api/customer/addresses/**", Set.of("CUSTOMER"));
         ROUTE_ROLES.put("DELETE /api/customer/addresses/**", Set.of("CUSTOMER"));
         ROUTE_ROLES.put("POST /api/customer/end-users/**", Set.of("CUSTOMER"));
+        // More specific than the GET rule below, and declared first so it wins: this
+        // lookup-by-id route has no ownership check of its own (it's meant for internal,
+        // service-to-service calls that never go through the gateway at all, the same
+        // as vendor-service's product-by-sku lookup) -- through the PUBLIC gateway,
+        // restricting it to ADMIN closes what would otherwise be any authenticated
+        // customer reading another customer's end-user data by guessing an id.
+        ROUTE_ROLES.put("GET /api/customer/end-users/by-end-user-id/**", Set.of("ADMIN"));
         ROUTE_ROLES.put("GET /api/customer/end-users/**", Set.of("CUSTOMER"));
         ROUTE_ROLES.put("DELETE /api/customer/end-users/**", Set.of("CUSTOMER"));
     }

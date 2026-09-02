@@ -100,8 +100,9 @@ aggregator pom, so "build everything" means looping over modules.
 | `payment-service` | 8084 | Mocked, synchronous, idempotent by orderId. **No database** | yes | yes |
 | `auth-service` (Part D) | 8085 | Login, JWT issuance, bcrypt hashing. `auth_db` | yes | yes |
 | `vendor-service` (Part D) | 8086 | Vendor onboarding, vendor's product catalog. `vendor_db` | yes | yes |
+| `customer-service` (Part D) | 8087 | Customer onboarding, addresses, end users. `customer_db` | yes | yes |
 | `otel-collector` (Part D) | 4317 (grpc) / 4318 (http) | Receives OTLP, exports to Cloud Trace via `googlecloud` exporter | n/a | yes |
-| MySQL | 3306 | **three** schemas on one instance (`order_db`, `auth_db`) + a second instance with **two** schemas (`inventory_db`, `vendor_db`, 3307) | — | on the data VM |
+| MySQL | 3306 | **three** schemas on one instance (`order_db`, `auth_db`, `customer_db`) + a second instance with **two** schemas (`inventory_db`, `vendor_db`, 3307) | — | on the data VM |
 | Kafka | 9092 in-network / **29092 on the host** | `order.placed`, `inventory.reserved`, `inventory.failed`, `order.confirmed`, `order.cancelled` | — | on the data VM |
 
 Note `discovery-service`'s application name is `discovery-server`, which does **not** match
@@ -604,6 +605,36 @@ A 200 with **empty** `propertySources` means the filename doesn't match
 ## 10. Change log
 
 Newest first. Add an entry for every meaningful change.
+
+### 2026-09-02 — Phase D3 complete: customer-service, a real access-control gap found and fixed
+- **New `customer-service`**: `Customer` (server-minted `customerNo`, default
+  billing/shipping addresses), `CustomerAddress` (every address beyond the two
+  defaults), `EndUser` (one customer, many end users — "Vijay Sales" has end users
+  "Vijay Sales Mumbai", "Vijay Sales Pune", each with their own shipping address).
+  `Address` is a reused `@Embeddable` (line, city, **region**) — region is the zone
+  code Phase D7's fulfillment search matches against a warehouse's own region
+  (Phase D5), not decoration.
+- Same onboarding shape as D2: `POST /api/customer/onboard` (ADMIN-only) creates the
+  Customer row and calls auth-service's `/auth/credentials`. Every address/end-user
+  operation scoped to the caller's own `customerNo` from `X-User-Business-Id`.
+- **A real access-control gap, found before closing the phase, not after**:
+  `GET /api/customer/end-users/by-end-user-id/{id}` (built for internal,
+  service-to-service lookups — the same shape as vendor-service's product-by-sku
+  route) had no ownership check and was reachable through the *public* gateway by any
+  authenticated `CUSTOMER`, letting them read another customer's end-user name and
+  shipping address by guessing an id. Fixed with a more-specific gateway route-role
+  entry (`GET /api/customer/end-users/by-end-user-id/**` → `ADMIN` only, declared
+  before the broader `CUSTOMER` pattern in `JwtAuthFilter`'s `LinkedHashMap` so it's
+  checked first). Internal callers never go through the gateway, so this doesn't
+  affect the route's actual intended use in Phase D7.
+- **`customer_db`** is a third schema on the existing `order-mysql` instance (now
+  hosting `order_db`, `auth_db`, `customer_db` — `inventory-mysql` hosts
+  `inventory_db`, `vendor_db`).
+- **Verified live**: onboarded two customers through the public gateway; second
+  customer's own address/end-user lists correctly empty; second customer's attempt to
+  delete the first's address returns `404` (deliberately, not `403` — same
+  don't-confirm-existence reasoning as auth-service's login error); admin's customer
+  list shows both.
 
 ### 2026-09-02 — Phase D2 complete: vendor-service, verified live end to end
 - **New `vendor-service`**: `Vendor` (server-minted UUID `vendorId`, same reasoning as

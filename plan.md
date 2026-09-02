@@ -1006,6 +1006,35 @@ the second vendor's own product list is correctly empty → admin's product list
 shows every vendor's catalog. Also verified: a `CUSTOMER`-role token gets `403` on the
 onboarding route, and no token at all gets `401`.
 
+## Phase D3 — Customer onboarding, addresses, end users ✅ *(done 2026-09-02)*
+
+- [x] `customer-service` (new): `Customer` (server-minted `customerNo`, default
+      billing/shipping addresses), `CustomerAddress` (every address given beyond the two
+      defaults), `EndUser` (one customer, many end users — "Vijay Sales" has end users
+      "Vijay Sales Mumbai", "Vijay Sales Pune", each with their own shipping address).
+- [x] `Address` embeddable (line, city, **region**) reused across all three — `region` is
+      the zone code Phase D7's fulfillment search will match against a warehouse's region
+      (Phase D5), the "simple region matching" decision, not decoration.
+- [x] `POST /api/customer/onboard` (ADMIN-only), same dual-write-to-auth-service shape as
+      vendor onboarding. Every address/end-user operation scoped to the caller's own
+      `customerNo` from `X-User-Business-Id`.
+- [x] `customer_db` is a third schema on the existing `order-mysql` instance.
+
+**Exit:** met, verified live: onboarded two customers; the second customer's own
+address/end-user lists are correctly empty; the second customer's attempt to delete the
+first's address returns `404` (deliberately not `403` — existence of another customer's
+address is not confirmed or denied, matching how login already treats "wrong password"
+and "no such user" the same way); admin's customer list shows both.
+
+**A real gap, found and fixed before closing this phase:** `GET
+/api/customer/end-users/by-end-user-id/{id}` (meant for internal, service-to-service
+lookups in Phase D7, the same way vendor-service's product-by-sku lookup is) had no
+ownership check of its own and was reachable through the public gateway by any
+authenticated `CUSTOMER`. Fixed with a more-specific gateway route-role entry
+(`GET /api/customer/end-users/by-end-user-id/**` → `ADMIN` only, declared before the
+broader `CUSTOMER`-allowed pattern so it wins) — internal service-to-service calls never
+go through the gateway anyway, so this doesn't affect Phase D7's actual use of the route.
+
 ---
 
 ## Resume discipline
