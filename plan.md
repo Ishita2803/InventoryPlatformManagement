@@ -920,7 +920,7 @@ same way every other part of this project is documented.
 | `auth_db` | Second schema + app user on the existing `order-mysql` instance, not a third MySQL container | Credential is a handful of rows; a whole extra `mysqld` process for that is operationally wasteful on a 4 GB data VM. |
 | Node pool capacity | Bumped `max-nodes` 4 → 6 | Auth-service + otel-collector pushed the cluster back into the exact capacity crunch Phase 15 first hit — same fix as before (raise the ceiling), same root cause (`e2-medium` nodes have very little allocatable headroom once GKE's own addons are accounted for). |
 
-## Phase D1 — Auth & tracing foundation 🟡 *(auth verified live 2026-09-02; tracing export to Cloud Trace not yet confirmed)*
+## Phase D1 — Auth & tracing foundation ✅ *(done 2026-09-02/03)*
 
 - [x] `auth-service` (new): `Credential` entity (username, bcrypt hash, role, businessId),
       `POST /auth/login` issues an HS256 JWT, `POST /auth/credentials` (not routed
@@ -938,14 +938,15 @@ same way every other part of this project is documented.
       `googlecloud` exporter, reusing the existing `order-platform-workload` Workload
       Identity GSA granted `roles/cloudtrace.agent`). Every service exports plain OTLP
       with zero GCP-specific code.
-- [ ] **Not yet verified: spans actually reaching Cloud Trace.** `auth-service` and the
-      gateway both have `spring-boot-starter-opentelemetry` wired in and configured; the
-      OTLP HTTP exporter demonstrably initializes (confirmed via DEBUG logs), but no
-      spans have reached Cloud Trace after multiple real requests and repeated fixes to
-      the export endpoint property (see traps below). Root cause not yet found — likely
-      a missing HTTP-server-instrumentation trigger specific to this very new Boot 4.1
-      `spring-boot-starter-opentelemetry` module. **Do not claim tracing works until this
-      is confirmed with a real trace visible in the Cloud Trace console.**
+- [x] **Spans confirmed reaching Cloud Trace**, for real — queried
+      `cloudtrace.googleapis.com/v1/.../traces` directly and got back real spans from
+      both `auth-service` and `api-gateway-service`, correct trace/span IDs, correct
+      `service.name`, correct GCP resource labels. The two earlier "empty" checks were a
+      false alarm from checking before a redeploy had propagated, **not** a broken
+      pipeline — see the trap below for what actually needed fixing along the way.
+      Extended the same `spring-boot-starter-opentelemetry` + `otel-collector` OTLP
+      pattern to every remaining service (`order-service`, `inventory-service`,
+      `notification-service`, `payment-service`, `config-service`).
 
 **Real bugs found and fixed getting this far, worth knowing:**
 1. `kubectl apply` on a manifest whose image field still names an old tag silently
@@ -962,11 +963,11 @@ same way every other part of this project is documented.
    The real property is `management.opentelemetry.tracing.export.otlp.endpoint`, default
    transport HTTP on port 4318 with the full `/v1/traces` path, not gRPC on 4317.
 
-**Exit (partial):** met for auth — verified live: all 4 seeded roles log in and receive a
+**Exit:** met. Auth verified live: all 4 seeded roles log in and receive a
 correctly-claimed JWT; `/auth/me` returns 401 with no token, 401 with a garbage token, and
 200 with the decoded identity for a valid token, all against the real deployed gateway.
-**Not met for tracing** — carried forward as this phase's first remaining task before D2
-starts, per this project's own rule that a phase isn't done until its exit criteria pass.
+Tracing verified live: real traces for real requests, queried directly out of Cloud Trace,
+not asserted from reading config.
 
 **Known gap, not yet closed:** `auth-service` is not wired into the root
 `docker-compose.yml` for local dev — it only runs on GKE today. Local Compose parity

@@ -604,6 +604,29 @@ A 200 with **empty** `propertySources` means the filename doesn't match
 
 Newest first. Add an entry for every meaningful change.
 
+### 2026-09-03 — Phase D1 complete: tracing confirmed live, rolled out to every service
+- **The "tracing export still open" item from the entry below is resolved — it was a
+  false alarm, not a bug.** `/actuator/conditions` and `/actuator/beans` (temporarily
+  exposed on `auth-service`) showed every relevant bean (`webMvcObservationFilter`,
+  `otelSdkTracerProvider`, `otlpHttpSpanExporter`) already present and correctly wired.
+  Adding a `debug` exporter to `otel-collector`'s own pipeline showed real spans arriving
+  within seconds of a request. Querying the Cloud Trace API directly then confirmed real
+  traces for both `auth-service` and `api-gateway-service`, correct trace/span IDs,
+  correct `service.name` and GCP resource labels. The earlier empty results were from
+  checking before a redeploy's config had propagated, not a broken pipeline.
+- **Extended the same pattern to every remaining service** — `order-service`,
+  `inventory-service`, `notification-service`, `payment-service`, `config-service` (the
+  last configured in its own local `application.yaml`, since it can't fetch config from
+  itself). Same dependency (`spring-boot-starter-opentelemetry`), same properties
+  (`management.opentelemetry.tracing.export.otlp.endpoint`, not the deprecated
+  `management.otlp.tracing.*`). All five compile clean; CI built and deployed all of
+  them successfully.
+- Removed the temporary `debug` exporter and the temporarily-exposed
+  `conditions`/`beans`/`env` actuator endpoints on `auth-service` now that the real
+  `googlecloud` exporter is confirmed working — back to `health,info` only.
+- **Phase D1 is now fully done.** `plan.md` and the D1 learn file (`learn/22-...`)
+  updated to reflect this rather than left as a known-partial phase.
+
 ### 2026-09-02/03 — Phase D1 started: auth-service + gateway JWT verified live; tracing export still open
 - **Part D begins** — the "Impulse" supply chain modernization system this whole project
   was scaffolding for. Full design in the approved plan (service boundaries, key flows,
