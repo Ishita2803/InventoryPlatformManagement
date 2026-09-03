@@ -1,17 +1,56 @@
 # Interview guide — Fault-Tolerant Order Fulfillment Platform
 
-> **Part D in progress (as of Phase D6):** everything below this note describes the
-> Phase 1-11 order/inventory demo, which is still fully built, tested, and true. On top
-> of it, a real supply-chain domain ("Impulse" — vendors, warehouses, carriers,
-> customers, purchase orders, and eventually sales-order fulfillment/billing/direct
-> orders) is being built in Part D of `plan.md`. That domain adds real JWT auth
-> (Phase D1) and real distributed tracing via Cloud Trace (Phase D1) — reflected in §8
-> below — but its own pitch/whiteboard/data-model story isn't written up here yet. Do
-> **not** describe purchase orders, vendors, warehouses, or carriers as part of "the
-> pitch" until this note is replaced with a rewritten §1-§5 (planned for once Part D's
-> frontend and analytics phases, D10-D11, land and the whole flow can be told as one
-> story). Until then, `plan.md`'s Phase D1-D6 entries are the source of truth for what's
-> actually built in that domain.
+## Part D — Impulse: a modernized supply-chain domain on top of the platform below
+
+Everything in §1-§9 below describes the Phase 1-11 order/inventory demo, and it is all
+still fully built, tested, and true — it's the foundation the domain below is built on,
+not something superseded by it.
+
+**The pitch.** "Impulse" models a mainframe-style supply-chain system, modernized onto
+this platform: vendors list products, admin prices them for sale, warehouses hold stock
+by region, customers place orders that resolve fulfillment against real stock, shortfalls
+auto-backorder from the vendor, carriers price shipping by weight, and every sale is
+invoiced and reported on. The differentiator over the Phase 1-11 demo isn't more
+CRUD — it's that every one of those actors (vendor, customer, carrier, admin) is a real
+login with role-enforced routes, and every flow reuses the Saga/outbox/idempotency
+machinery already proven below rather than reinventing it per domain.
+
+**The two order flows, and why there are two.** A **sales order** (Phase D7) resolves
+synchronously: search the customer's own region's warehouse first, then every other
+warehouse in registration order, greedily reserving whatever's available, never
+rejecting — a fully-stocked order ships in full, a partially-stocked one ships what it
+can and auto-backorders the rest through the exact same purchase-order mechanism admin
+uses for manual stocking (Phase D6). That's a deliberate divergence from the Phase 1-11
+Saga: "never reject, tell the customer what actually shipped" is a promise about *this
+response*, so the fulfillment search has to happen before the response is built, not
+later via Kafka. A **direct order** (Phase D9) is the opposite case: it buys straight
+from the vendor and never touches inventory-service's reservation machinery at all —
+proof that removing a dependency removes the whole category of failure that depending on
+it required handling (no fulfillment search, no release-on-failure compensation, because
+there's nothing on inventory-service's side to compensate for).
+
+**Auth and tracing are real, not simulated.** `auth-service` issues JWTs over
+bcrypt-hashed passwords; the gateway enforces per-route, per-role authorization from a
+verified token, not a client-supplied header. Every service exports real distributed
+traces to GCP Cloud Trace via an in-cluster OpenTelemetry Collector — a single sales
+order shows up as one connected waterfall across the gateway, order-service,
+inventory-service, and every Kafka hop between them, verified live in the Cloud Trace
+console, not just log correlation.
+
+**Two things worth naming as design decisions, not oversights, if asked "why not
+microservices for everything":** purchase orders live in `order-service` (not a separate
+service) because they share the exact outbox/idempotent-consumer shape sales orders
+already use — same aggregate type, same actor category as far as the machinery cares.
+Vendor, customer, and carrier are three separate services, not because their APIs are
+big, but because each is a genuinely distinct actor with its own login and lifecycle —
+merging them to save a pod would couple three unrelated bounded contexts.
+
+See `plan.md`'s Phase D1–D11 entries and `learn/22`–`learn/32` for the full build story,
+including every real bug found and fixed along the way (a data-sync gap between two
+`Product` tables, a schema-migration limitation, a reconciliation sweep that would have
+mis-cancelled a healthy order). §8 below reflects Impulse's auth/tracing capabilities
+where relevant; its own detailed data model and failure-mode deep-dive follow the same
+"never claim more than is built" discipline as the rest of this file.
 
 > **What this file is for.** Everything you need to explain this project confidently, from a
 > 30-second pitch to a whiteboard deep-dive, plus the awkward questions and honest answers.

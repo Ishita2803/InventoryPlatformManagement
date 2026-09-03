@@ -1262,6 +1262,43 @@ sales order and confirmed it appeared in the new carrier's `GET /api/orders/assi
 
 ---
 
+## Phase D11 — Analytics ✅ *(done 2026-09-03, Part D complete)*
+
+- [x] `ProfitReportService` (`order-service`): `Σ (salePrice − costPrice) × quantitySold`,
+      one line per sku that's ever actually sold — a shipped Phase D7 sales-order row
+      (real `warehouseId`) or a completed Phase D9 direct-order row (`order.direct`),
+      explicitly **excluding** a still-backordered sales-order row, which hasn't sold
+      anything yet.
+- [x] New `OrderItemRepository` with a single aggregate JPQL query
+      (`totalShippedQuantityBySku`) — the first repository built purely for a read no
+      other flow needed, since every prior repository method served a mutation path too.
+- [x] `VendorServiceClient.VendorProduct` gains `costPrice` (previously fetched only
+      `vendorId`/`unitWeight`) — the other half of the margin, alongside
+      inventory-service's own `salePrice`.
+- [x] Computed on request from the rows that already exist, not a maintained running
+      total — consistent with this project's bias toward deriving numbers rather than
+      risking a second place they could drift from.
+- [x] **Stated limitation, not silently glossed over**: only reflects *today's* catalog
+      price against *all-time* quantity sold, since Phase D5 lets admin re-price a sku in
+      place — not a true historical margin. A real analytics system would need a price
+      history table; out of scope for a portfolio project, and said so plainly.
+- [x] A sku with real quantity sold but no current vendor/catalog entry is skipped, not
+      fatal to the whole report.
+- [x] Surfaced admin-only (`GET /api/analytics/profit`, gateway-gated `ADMIN`) in a new
+      profit-report section of `admin.html`.
+
+**Exit:** met, verified live: the reported total (58 units × 35.00 profit/unit = 2,030.00
+for `ACME-WIDGET-A`) matched `quantitySold × (salePrice − costPrice)` computed by hand
+from the real catalog/vendor prices; confirmed the aggregate correctly excludes
+backordered quantity (the report's total did not include any of the units still sitting
+backordered from earlier Phase D7 verification); confirmed `401` with no token and `403`
+for a non-ADMIN role.
+
+**Part D (Phases D1–D11) is now complete.** Every phase's exit criteria have been met and
+verified against the real deployed system, in order, without skipping ahead.
+
+---
+
 ## Resume discipline
 
 Claim a capability **only after it is implemented and tested.** Interviewers ask about

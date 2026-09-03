@@ -626,6 +626,43 @@ A 200 with **empty** `propertySources` means the filename doesn't match
 
 Newest first. Add an entry for every meaningful change.
 
+### 2026-09-03 — Phase D11 complete: profit reporting (Part D now fully complete)
+- **`ProfitReportService`** (`order-service`): `Σ (salePrice − costPrice) × quantitySold`,
+  one line per sku that's actually sold something — a shipped Phase D7 sales-order row,
+  or a completed Phase D9 direct-order row — explicitly excluding a still-backordered
+  row, which hasn't sold anything at all.
+- **First repository built purely for a read**: `OrderItemRepository`'s single JPQL
+  aggregate query (`totalShippedQuantityBySku`) is the first repository in this project
+  that serves no mutation path at all -- every earlier repository method backed some
+  write flow too.
+- **`VendorServiceClient.VendorProduct` gains `costPrice`** -- the other half of the
+  margin calculation, fetched alongside inventory-service's own `salePrice`.
+- **Computed on request, not a maintained running total** -- the same bias this whole
+  project has shown toward deriving a number from the rows that already exist rather
+  than a second place it could silently drift from.
+- **A stated, not hidden, limitation**: the report only reflects *today's* catalog price
+  against *all-time* quantity sold. Phase D5 lets admin re-price a sku in place, so this
+  is not a true historical margin -- a real analytics system needs a price-history
+  table, explicitly out of scope and said so in the code, not discovered by an
+  interviewer asking a pointed question.
+- **A sku that sold in the past but has since lost its vendor or catalog entry is
+  skipped, not fatal** to the rest of the report.
+- **Surfaced admin-only**: `GET /api/analytics/profit` (gateway-gated `ADMIN`), folded
+  into order-service's existing gateway route predicate (same pattern D6's
+  purchase-orders and D10's assigned-orders additions used) -- a new admin.html section,
+  not a new page.
+- **Verified live**: the real report (58 units × 35.00 = 2,030.00 for `ACME-WIDGET-A`)
+  matched a hand computation from the real catalog/vendor prices; confirmed the
+  aggregate correctly excludes backordered quantity left over from earlier D7
+  verification; confirmed `401`/`403` on the new endpoint.
+
+**Part D (Phases D1 through D11) is complete.** Every phase's exit criteria were met and
+verified live, in order, without skipping ahead -- Impulse now has real auth, real
+distributed tracing, vendor/customer/carrier onboarding, warehouse/catalog management,
+purchase orders (stocking, auto-backorder, and direct), sales-order fulfillment search,
+billing/invoicing, four role-based frontend pages, and profit reporting, all built on
+top of the Phase 1-11 order/inventory platform without breaking any of it.
+
 ### 2026-09-03 — Phase D10 complete: role-based frontend for admin/vendor/customer/carrier
 - **Four static pages** (`admin.html`, `vendor.html`, `customer.html`, `carrier.html`),
   served by `api-gateway-service` exactly like `demo.html` -- no build step, no framework.
