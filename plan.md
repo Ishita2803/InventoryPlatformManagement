@@ -1129,6 +1129,38 @@ history and could not see another vendor's.
 
 ---
 
+## Phase D7 — Sales orders: fulfillment search ✅ *(done 2026-09-03)*
+
+- [x] `SalesOrderService` (new, `order-service`) resolves fulfillment **synchronously** at
+      creation time for any order whose items carry a `skuNumber` — a deliberate
+      divergence from the legacy demo flow's async Saga, because "never reject, return
+      whatever it can currently ship" means the caller needs the real `shipQuantity` in
+      this response. The legacy productId/warehouseId flow is untouched.
+- [x] `inventory-service`'s fulfillment search: the requested region's own warehouse
+      first, then every other warehouse in registration order, greedily reserving
+      whatever's available until the requested quantity is met or warehouses run out.
+      Reuses the existing optimistic-lock retry and `Reservation` idempotency machinery.
+- [x] One requested (sku, quantity) line can persist as several `OrderItem` rows — one
+      per warehouse it actually shipped from, plus a `warehouseId = null` row for
+      whatever couldn't be filled.
+- [x] Any shortfall auto-backorders through the existing D6 purchase-order mechanism
+      (`PurchaseOrderPurpose.BACKORDER`) against the same warehouse the search preferred.
+- [x] Compensation: a failure after inventory-service already reserved stock releases it
+      via the existing `/api/inventory/release` endpoint, rather than stranding it.
+- [x] Real bug found and fixed: `OrderReconciliationService`'s stuck-order sweep would
+      eventually have cancelled a healthy D7 sales order sitting at `INVENTORY_RESERVED`
+      awaiting Phase D8's billing, mistaking it for a stalled legacy Saga. Fixed by
+      excluding sales orders (`deliveryRegion IS NOT NULL`) from the sweep's query.
+
+**Exit:** met, verified live against the real deployed system: an order with full stock
+ships in full with no backorder; an order exceeding a warehouse's stock ships the
+available portion and a `BACKORDER` purchase order is auto-created and auto-fulfilled
+within ~2 seconds, with the warehouse's `availableQuantity` verifiably rising by exactly
+the backordered amount; the legacy demo order flow is unaffected and still starts at
+`PENDING`.
+
+---
+
 ## Resume discipline
 
 Claim a capability **only after it is implemented and tested.** Interviewers ask about

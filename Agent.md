@@ -577,6 +577,25 @@ esourcesin\docker.exe` or start a new shell.
     needs X -- deliberately not Y") fails the whole POM to parse with a cryptic
     `Non-parseable POM` / `ModelParseException` pointing at an unrelated later line. Use a
     comma or semicolon instead of `--` inside any XML comment.
+54. **CI's `kubectl set image` never applies `deploy/k8s/configmap.yaml`.** The pipeline
+    only patches each Deployment's image tag; a new key added to the shared ConfigMap
+    (Phase D7's `INVENTORY_BASE_URL`) sits in the repo doing nothing until someone runs
+    `kubectl apply -f deploy/k8s/configmap.yaml` by hand, **and** the consuming
+    Deployment is restarted (`kubectl rollout restart`) — env vars from `envFrom:
+    configMapRef` are only read at pod start, never live-reloaded. Symptom: a client falls
+    back to its `@Value` default (`http://localhost:8082`) and fails with `Connection
+    refused`, which looks like a code bug, not a stale ConfigMap.
+55. **`ddl-auto: update` never relaxes an existing column's constraint.** Phase D7 dropped
+    `nullable = false` from `OrderItem.productId`/`warehouseId` (a sales-order's
+    backordered row has neither, until it ships) — Hibernate happily added the new
+    `sku_number` column but left the two existing ones `NOT NULL` in the real database,
+    because `update` only adds what's missing, it never alters what's already there. A
+    fresh database (a new clone's local Compose, or a wiped MySQL) never hits this: the
+    table is created from the entity's *current* constraints the first time. Only an
+    already-populated database drifts from what the entity now says — found by a live
+    500 on the very first partial-fulfillment order, fixed with a manual `ALTER TABLE
+    order_item MODIFY COLUMN warehouse_id VARCHAR(64) NULL` (and the same for
+    `product_id`) against the real order_db.
 
 ## 9. Startup order and verification (local)
 
@@ -606,6 +625,54 @@ A 200 with **empty** `propertySources` means the filename doesn't match
 ## 10. Change log
 
 Newest first. Add an entry for every meaningful change.
+
+### 2026-09-03 — Phase D7 complete: sales-order fulfillment search, partial ship, auto-backorder
+- **`SalesOrderService`** (new, `order-service`): resolves a sales order's fulfillment
+  **synchronously**, at creation time — a deliberate divergence from the legacy demo
+  flow's async `OrderPlaced`/`InventoryReserved` Saga. "Never reject, return the order
+  with whatever it can currently ship" means the caller needs the real `shipQuantity` in
+  *this* response, not eventually via Kafka. `OrderService.createOrder` routes to it only
+  when a request's items carry a `skuNumber`; the legacy productId/warehouseId flow is
+  completely untouched, including all 62 of its existing tests.
+- **`inventory-service`'s fulfillment search** (`InventoryTxService.fulfillSalesOrderLine`,
+  exposed via `POST /api/inventory/fulfillment`, internal-only): the requested region's
+  own warehouse first, then every other warehouse in registration order, greedily
+  reserving whatever's available from each until the requested quantity is met or
+  warehouses run out. Reuses the existing optimistic-lock retry and `Reservation`
+  idempotency machinery (Phase 1/4) rather than inventing new concurrency handling — the
+  only new code is *which* warehouses to try and in what order.
+- **One requested (sku, quantity) line can persist as several `OrderItem` rows**: one per
+  warehouse it actually shipped from, plus a `warehouseId = null` row for whatever
+  couldn't be filled. `OrderItem.productId`/`warehouseId` had to become nullable for the
+  first time since Phase 2 — see Agent.md trap #55 for the real `ddl-auto: update` gap
+  that caused live on the very first partial order.
+- **Shortfall auto-backorders** through the exact D6 purchase-order mechanism, now with a
+  second `PurchaseOrderPurpose` (`BACKORDER` instead of `STOCKING`) — same vendor
+  resolution, same outbox event, same mock-vendor fulfillment, placed against the same
+  warehouse the search would have preferred.
+- **Compensation on a late failure**: the inventory-service call happens inside
+  `SalesOrderService.create`'s transaction; if persisting the order itself then fails
+  (e.g. a DB error), the reservation inventory-service already made would be stranded.
+  Caught with a try/catch that calls the existing `/api/inventory/release` endpoint —
+  the same compensation Saga cancellation already relies on — before rethrowing.
+- **A second real bug found and fixed before it could bite in production**:
+  `OrderReconciliationService`'s stuck-order sweep queries every order sitting in
+  `INVENTORY_RESERVED` past a timeout and either settles or cancels it. A D7 sales order
+  reaches `INVENTORY_RESERVED` synchronously and then just *waits* there for Phase D8's
+  billing (not built yet) — indistinguishable from a genuinely stalled legacy Saga to
+  that query. Fixed by excluding `deliveryRegion IS NOT NULL` orders from
+  `findStuckOrderIds`, so the sweep only ever acts on the legacy async flow it was built
+  for.
+- **Verified live, three scenarios against the real deployed system**: (1) a
+  well-within-stock sales order ships in full, no backorder; (2) a request exceeding a
+  warehouse's stock ships the available portion and auto-creates+auto-fulfills a
+  `BACKORDER` purchase order for the rest within ~2 seconds, confirmed by re-querying
+  stock (`availableQuantity` rose by exactly the backordered amount); (3) the legacy
+  demo order flow, unchanged, still starts at `PENDING` and is unaffected by any of the
+  above. New unit tests: 6 in `InventoryTxServiceTest` (full/partial/zero-stock/no-
+  warehouse/unknown-sku/unknown-catalog-item), 7 in the new `SalesOrderServiceTest`
+  (backorder decision logic, mixed-item rejection, missing-region rejection, release
+  compensation) — full suites still green (order-service 69 tests, inventory-service 40).
 
 ### 2026-09-03 — Phase D6 complete: purchase orders, folded into order-service (not a new pod)
 - **`PurchaseOrder`** added to `order-service` as a new aggregate — purchaseOrderId,
