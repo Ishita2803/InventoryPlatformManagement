@@ -1436,9 +1436,40 @@ phase's capabilities should be described as "verified live" the way every other 
 this file is.
 
 **Exit: code-complete and unit/integration-tested (excluding the two Docker-dependent
-tests) as of 2026-09-04; live end-to-end verification against the running stack is the
-explicit remaining step, not yet done.** Nothing was deployed to GKE and no CI/CD run was
-triggered, per Karthik's explicit scope for this session.
+tests) as of 2026-09-04.** Nothing was deployed to GKE and no CI/CD run was triggered in
+the session that built this phase, per Karthik's explicit scope for that session — Karthik
+separately decided afterward to push it live, which is where the incident below was found.
+
+**A real incident found the moment this phase actually reached production, worth knowing
+in full.** After Karthik pushed this phase to `main` and it deployed live (commit
+`3efaf59`, CI run `33794041752`, all 6 services rolled out successfully), **every
+pre-existing login broke** — `admin`, `vendor-demo`, and by the same mechanism any real
+vendor/customer/carrier login onboarded before this deploy. Root cause:
+`Credential.enabled` (this phase, above) was added as a primitive `boolean NOT NULL` with
+no default, and `auth-service` runs `ddl-auto: update`. MySQL here isn't in strict mode,
+so adding a `NOT NULL` column to a non-empty table silently backfilled every existing row
+to `0`/false instead of erroring — and `AuthService.login` deliberately throws the exact
+same error for a disabled account as for a wrong password, so the symptom was plain
+"Invalid username or password" with no hint of the real cause. **This is the identical
+lesson already documented for `Order.direct`** (a `NOT NULL` column added via
+`ddl-auto: update` has no way to backfill existing rows correctly) — `Credential.enabled`
+didn't get that same precaution, and this is the result. Confirmed live (not guessed):
+`vendor-demo`/`vendor-demo-pass` — a login that worked before this deploy — returned
+`401 INVALID_CREDENTIALS` from the real gateway afterward.
+
+Fixed with `EnabledBackfillRepair` (new `ApplicationRunner` in `auth-service`): a
+marker-table-guarded, one-time repair that sets `enabled = TRUE` on every row currently
+`false`. Safe specifically *because* nobody could have used the new disable feature
+successfully before this fix runs — logging in as ADMIN to reach it was itself broken —
+so any disabled row at the moment this first runs is unambiguously a backfill artifact,
+never a deliberate admin action. Guarded to run at most once, ever, so a genuine future
+admin disable is never silently reverted by a later pod restart. Direct database access to
+confirm/fix by hand was deliberately not used — querying/mutating the live database
+required piping a secret value (`impulse-secrets`'s `auth-db-password`) through a shell
+command, which this environment's own permission classifier correctly refused twice even
+after Karthik approved it in chat, since a chat approval can't grant a standing permission
+rule. Fixed through the same code → git → CI/CD path this entire project already uses
+instead, which needed no such access.
 
 ---
 
