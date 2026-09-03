@@ -25,6 +25,7 @@ public class CarrierService {
     private final CarrierRepository carrierRepository;
     private final WeightTierRepository weightTierRepository;
     private final AuthServiceClient authServiceClient;
+    private final WeightTierService weightTierService;
 
     @Transactional
     public CarrierResponse onboard(OnboardCarrierRequest request) {
@@ -51,6 +52,20 @@ public class CarrierService {
     public CarrierResponse get(String carrierCode) {
         return toResponse(carrierRepository.findByCarrierCode(carrierCode)
                 .orElseThrow(() -> new CarrierNotFoundException(carrierCode)));
+    }
+
+    /**
+     * Phase D8's actual use of {@code WeightTierService.surchargeFor} -- payment-service
+     * calls this synchronously while generating an invoice. Verifying the carrier exists
+     * first (rather than letting an unconfigured code silently return zero, which
+     * {@code surchargeFor} does for a real carrier with no tiers) turns a typo'd
+     * carrierCode into a clear 404 instead of a silently-wrong invoice.
+     */
+    public java.math.BigDecimal surchargeFor(String carrierCode, java.math.BigDecimal weightKg) {
+        if (!carrierRepository.existsByCarrierCode(carrierCode)) {
+            throw new CarrierNotFoundException(carrierCode);
+        }
+        return weightTierService.surchargeFor(carrierCode, weightKg);
     }
 
     private CarrierResponse toResponse(Carrier carrier) {

@@ -8,6 +8,7 @@ public record OrderItemResponse(
         String skuNumber,
         Integer quantity,
         BigDecimal unitPrice,
-        BigDecimal lineTotal
+        BigDecimal lineTotal,
+        BigDecimal unitWeight
 ) {
 }

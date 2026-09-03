@@ -4,6 +4,7 @@ import com.demo.order_service.dto.OrderResponse;
 import com.demo.order_service.events.KafkaTopics;
 import com.demo.order_service.events.OrderCancelledEvent;
 import com.demo.order_service.events.OrderConfirmedEvent;
+import com.demo.order_service.events.InvoiceGeneratedEvent;
 import com.demo.order_service.events.OrderPlacedEvent;
 import com.demo.order_service.events.PurchaseOrderFulfilledEvent;
 import com.demo.order_service.events.PurchaseOrderPlacedEvent;
@@ -116,6 +117,18 @@ public class OutboxWriter {
                 warehouseId, Instant.now());
 
         write(event.eventId(), "PurchaseOrder", purchaseOrderId, KafkaTopics.PURCHASE_ORDER_FULFILLED, event);
+    }
+
+    /** Phase D8: queues the invoice notification once payment-service has computed the
+     * amount -- same outbox shape as every other event this service publishes, so a crash
+     * between computing the invoice and this write cannot lose the notification. */
+    public void writeInvoiceGenerated(String orderId, String customerId,
+                                       String invoiceId, java.math.BigDecimal totalAmount) {
+
+        InvoiceGeneratedEvent event = new InvoiceGeneratedEvent(
+                UUID.randomUUID().toString(), orderId, customerId, invoiceId, totalAmount, Instant.now());
+
+        write(event.eventId(), orderId, KafkaTopics.INVOICE_GENERATED, event);
     }
 
     private void write(String eventId, String orderId, String topic, Object payload) {

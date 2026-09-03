@@ -77,9 +77,10 @@ class OrderServiceTest {
                 OrderStatus.PENDING,
                 new BigDecimal("21.00"),
                 List.of(new OrderItemResponse(
-                        1L, "WH-1", null, 2, new BigDecimal("10.50"), new BigDecimal("21.00"))),
+                        1L, "WH-1", null, 2, new BigDecimal("10.50"), new BigDecimal("21.00"), null)),
                 Instant.parse("2026-08-26T10:00:00Z"),
                 Instant.parse("2026-08-26T10:00:00Z"),
+                null,
                 null
         );
     }

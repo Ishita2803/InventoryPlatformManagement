@@ -21,6 +21,12 @@ public class CreateOrderRequest {
     private String deliveryRegion;
 
     /**
+     * Only required for a Phase D7 sales order -- Phase D8's invoice needs it to price the
+     * weight surcharge. Same "one shape or the other" reasoning as {@link #deliveryRegion}.
+     */
+    private String carrierCode;
+
+    /**
      * {@code @Valid} on the collection is what makes the per-item constraints run at all.
      * Without it an item with quantity -5 sails straight through.
      */

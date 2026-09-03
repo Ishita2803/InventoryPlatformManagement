@@ -72,6 +72,13 @@ public class KafkaConfig {
         return TopicBuilder.name(KafkaTopics.PURCHASE_ORDER_FULFILLED).partitions(1).replicas(1).build();
     }
 
+    /** Phase D8: this service publishes a sales order's invoice once payment-service has
+     * computed it; notification-service is the sole consumer. */
+    @Bean
+    public NewTopic invoiceGeneratedTopic() {
+        return TopicBuilder.name(KafkaTopics.INVOICE_GENERATED).partitions(1).replicas(1).build();
+    }
+
     /**
      * The object-valued template, for publishing domain events as JSON.
      *

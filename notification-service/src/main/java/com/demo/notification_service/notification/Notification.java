@@ -12,6 +12,7 @@ public record Notification(Kind kind, String orderId, String body) {
 
     public enum Kind {
         ORDER_CONFIRMED,
-        ORDER_FAILED
+        ORDER_FAILED,
+        INVOICE_GENERATED
     }
 }

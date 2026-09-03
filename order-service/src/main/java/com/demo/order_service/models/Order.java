@@ -54,6 +54,11 @@ public class Order {
     @Column(name = "delivery_region", length = 100)
     private String deliveryRegion;
 
+    /** Nullable for the same reason as {@link #deliveryRegion} -- only a Phase D7 sales
+     * order has one, and Phase D8's invoice surcharge is priced against it. */
+    @Column(name = "carrier_code", length = 64)
+    private String carrierCode;
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 32)
     private OrderStatus status;

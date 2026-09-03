@@ -24,6 +24,10 @@ public final class KafkaTopics {
     public static final String ORDER_CONFIRMED = "order.confirmed";
     public static final String ORDER_CANCELLED = "order.cancelled";
 
+    /** Phase D8: a sales order's invoice, computed by payment-service and published by
+     * order-service once generated. */
+    public static final String INVOICE_GENERATED = "invoice.generated";
+
     private KafkaTopics() {
     }
 }

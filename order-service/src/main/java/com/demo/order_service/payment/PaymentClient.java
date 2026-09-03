@@ -133,10 +133,78 @@ public class PaymentClient {
         return PaymentResult.unavailable(failure.getClass().getSimpleName() + ": " + failure.getMessage());
     }
 
+    /**
+     * Phase D8: compute a sales order's invoice. Shares this client's {@code RestClient}
+     * and the same {@code CIRCUIT} name as {@link #pay} -- both hit payment-service, so a
+     * payment-service outage should trip one breaker, not two independent ones that could
+     * disagree about whether the dependency is healthy.
+     *
+     * <p><strong>Fails open, unlike {@link #pay}.</strong> By the time this is called the
+     * sales order already exists and its stock is already reserved (Phase D7) -- a billing
+     * hiccup is not a reason to unwind a shipment that has already happened. The fallback
+     * therefore returns {@code null} rather than throwing; the caller logs and moves on
+     * without an invoice rather than failing (or worse, compensating) an order that was
+     * otherwise handled correctly.
+     */
+    @CircuitBreaker(name = CIRCUIT)
+    @Retry(name = CIRCUIT, fallbackMethod = "invoiceUnavailable")
+    public InvoiceResult generateInvoice(String orderId, String carrierCode, java.util.List<InvoiceLine> lines) {
+
+        log.info("Requesting invoice for order {} ({} line(s), carrier {})", orderId, lines.size(), carrierCode);
+
+        String correlationId = MDC.get("correlationId");
+
+        InvoiceRequest request = new InvoiceRequest(orderId, carrierCode, lines);
+
+        InvoiceResponse response = restClient.post()
+                .uri("/api/payments/invoices")
+                .contentType(MediaType.APPLICATION_JSON)
+                .headers(httpHeaders -> {
+                    if (correlationId != null) {
+                        httpHeaders.add("X-Correlation-Id", correlationId);
+                    }
+                })
+                .body(request)
+                .retrieve()
+                .body(InvoiceResponse.class);
+
+        if (response == null) {
+            throw new IllegalStateException("Payment service returned an empty invoice body");
+        }
+
+        log.info("Invoice {} generated for order {}: {}", response.invoiceId(), orderId, response.totalAmount());
+
+        return new InvoiceResult(response.invoiceId(), response.totalAmount());
+    }
+
+    @SuppressWarnings("unused")
+    private InvoiceResult invoiceUnavailable(
+            String orderId, String carrierCode, java.util.List<InvoiceLine> lines, Throwable failure) {
+
+        log.error("Invoice generation unavailable for order {}: {} — order stands, no invoice was sent",
+                orderId, failure.toString());
+
+        return null;
+    }
+
     /** Request body. Duplicated rather than shared with payment-service, as with the events. */
     private record PaymentRequest(String orderId, BigDecimal amount) {
     }
 
     private record PaymentResponse(String paymentId, String orderId, String status, String message) {
+    }
+
+    public record InvoiceLine(String skuNumber, Integer quantity, BigDecimal unitPrice, BigDecimal unitWeight) {
+    }
+
+    public record InvoiceResult(String invoiceId, BigDecimal totalAmount) {
+    }
+
+    private record InvoiceRequest(String orderId, String carrierCode, java.util.List<InvoiceLine> lines) {
+    }
+
+    /** Only the fields this service actually needs -- lineTotal/totalWeight/weightSurcharge
+     * are payment-service's own business, not ours. */
+    private record InvoiceResponse(String invoiceId, BigDecimal totalAmount) {
     }
 }

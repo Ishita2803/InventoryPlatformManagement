@@ -10,6 +10,8 @@ import com.demo.order_service.models.Order;
 import com.demo.order_service.models.OrderItem;
 import com.demo.order_service.models.OrderStatus;
 import com.demo.order_service.models.PurchaseOrderPurpose;
+import com.demo.order_service.outbox.OutboxWriter;
+import com.demo.order_service.payment.PaymentClient;
 import com.demo.order_service.repository.OrderRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -17,6 +19,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -42,6 +45,8 @@ public class SalesOrderService {
     private final PurchaseOrderService purchaseOrderService;
     private final OrderRepository orderRepository;
     private final OrderMapper orderMapper;
+    private final PaymentClient paymentClient;
+    private final OutboxWriter outboxWriter;
 
     public static boolean isSalesOrder(CreateOrderRequest request) {
         return request.getItems() != null
@@ -71,6 +76,7 @@ public class SalesOrderService {
             order.setOrderId(orderId);
             order.setCustomerId(request.getCustomerId());
             order.setDeliveryRegion(request.getDeliveryRegion());
+            order.setCarrierCode(request.getCarrierCode());
             order.setStatus(OrderStatus.INVENTORY_RESERVED);
 
             for (OrderItemRequest itemRequest : request.getItems()) {
@@ -83,6 +89,8 @@ public class SalesOrderService {
 
             log.info("Created sales order {} for customer {} with {} item(s), shipped total {}",
                     saved.getOrderId(), saved.getCustomerId(), saved.getItems().size(), saved.getTotalAmount());
+
+            generateInvoiceIfAnythingShipped(saved);
 
             return orderMapper.toResponse(saved);
 
@@ -106,6 +114,7 @@ public class SalesOrderService {
             shipped.setWarehouseId(allocation.warehouseId());
             shipped.setQuantity(allocation.quantity());
             shipped.setUnitPrice(result.unitPrice());
+            shipped.setUnitWeight(result.unitWeight());
             order.addItem(shipped);
         }
 
@@ -131,8 +140,8 @@ public class SalesOrderService {
     }
 
     /** Only shipped rows count toward what's charged now -- a backordered row hasn't left
-     * a warehouse yet, and what happens to its price when it eventually ships is Phase
-     * D8's billing question to answer, not this phase's. */
+     * a warehouse yet, and what happens to its price when it eventually ships is priced
+     * fresh, whenever it does. */
     private BigDecimal shippedTotal(Order order) {
         return order.getItems().stream()
                 .filter(item -> item.getWarehouseId() != null)
@@ -140,10 +149,47 @@ public class SalesOrderService {
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
     }
 
+    /**
+     * Phase D8: invoices only the shipped portion of the order -- a backordered line isn't
+     * charged for until it ships. Skips the call entirely if nothing shipped at all (a
+     * wholly-backordered order), since an invoice for zero is not a real invoice.
+     *
+     * <p>A failed invoice call does not fail the order: see {@code PaymentClient
+     * .generateInvoice}'s fails-open fallback. This method only logs if that happens.
+     */
+    private void generateInvoiceIfAnythingShipped(Order order) {
+
+        List<PaymentClient.InvoiceLine> shippedLines = order.getItems().stream()
+                .filter(item -> item.getWarehouseId() != null)
+                .map(item -> new PaymentClient.InvoiceLine(
+                        item.getSkuNumber(), item.getQuantity(), item.getUnitPrice(), item.getUnitWeight()))
+                .toList();
+
+        if (shippedLines.isEmpty()) {
+            log.info("Order {} shipped nothing -- no invoice to generate yet", order.getOrderId());
+            return;
+        }
+
+        PaymentClient.InvoiceResult result = paymentClient.generateInvoice(
+                order.getOrderId(), order.getCarrierCode(), shippedLines);
+
+        if (result == null) {
+            log.warn("No invoice was generated for order {} -- payment-service was unavailable", order.getOrderId());
+            return;
+        }
+
+        outboxWriter.writeInvoiceGenerated(
+                order.getOrderId(), order.getCustomerId(), result.invoiceId(), result.totalAmount());
+    }
+
     private void validate(CreateOrderRequest request) {
 
         if (request.getDeliveryRegion() == null || request.getDeliveryRegion().isBlank()) {
             throw new IllegalArgumentException("deliveryRegion is required for a sales order");
+        }
+
+        if (request.getCarrierCode() == null || request.getCarrierCode().isBlank()) {
+            throw new IllegalArgumentException("carrierCode is required for a sales order");
         }
 
         boolean mixed = request.getItems().stream().anyMatch(item -> item.getSkuNumber() == null);

@@ -26,4 +26,6 @@ data:
   # directly, never through the gateway -- same boundary every other cross-service client
   # in this project already relies on.
   INVENTORY_BASE_URL: "http://inventory-service:8082"
+  # Phase D8: payment-service's InvoiceService looks up a carrier's weight-tier surcharge.
+  CARRIER_BASE_URL: "http://carrier-service:8088"
   SPRING_PROFILES_ACTIVE: "k8s"

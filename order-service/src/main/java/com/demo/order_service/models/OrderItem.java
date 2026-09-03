@@ -61,6 +61,13 @@ public class OrderItem {
     @Column(nullable = false)
     private Integer quantity;
 
+    /** Phase D8: denormalized from inventory-service's catalog at fulfillment time (Phase
+     * D7), so invoicing can compute an order's total weight without a second synchronous
+     * call back to inventory-service. Null for a legacy demo line -- that flow has no
+     * weight-based invoicing at all. */
+    @Column(name = "unit_weight", precision = 10, scale = 3)
+    private java.math.BigDecimal unitWeight;
+
     /**
      * Price per unit at the time the order was placed.
      *

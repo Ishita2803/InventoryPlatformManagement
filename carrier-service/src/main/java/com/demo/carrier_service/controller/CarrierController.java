@@ -37,4 +37,16 @@ public class CarrierController {
     public ResponseEntity<CarrierResponse> get(@PathVariable String carrierCode) {
         return ResponseEntity.ok(carrierService.get(carrierCode));
     }
+
+    /**
+     * Phase D8: payment-service calls this synchronously while generating a sales order's
+     * invoice, internal-only (never through the gateway) -- same boundary every other
+     * cross-service client in this project already relies on.
+     */
+    @GetMapping("/carriers/{carrierCode}/surcharge")
+    public ResponseEntity<java.util.Map<String, java.math.BigDecimal>> surcharge(
+            @PathVariable String carrierCode,
+            @RequestParam java.math.BigDecimal weightKg) {
+        return ResponseEntity.ok(java.util.Map.of("surcharge", carrierService.surchargeFor(carrierCode, weightKg)));
+    }
 }

@@ -9,6 +9,8 @@ import com.demo.order_service.mapper.OrderMapper;
 import com.demo.order_service.models.Order;
 import com.demo.order_service.models.OrderStatus;
 import com.demo.order_service.models.PurchaseOrderPurpose;
+import com.demo.order_service.outbox.OutboxWriter;
+import com.demo.order_service.payment.PaymentClient;
 import com.demo.order_service.repository.OrderRepository;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -46,12 +48,19 @@ class SalesOrderServiceTest {
     @Mock
     private OrderRepository orderRepository;
 
+    @Mock
+    private PaymentClient paymentClient;
+
+    @Mock
+    private OutboxWriter outboxWriter;
+
     private SalesOrderService salesOrderService;
 
     @org.junit.jupiter.api.BeforeEach
     void setUp() {
         salesOrderService = new SalesOrderService(
-                inventoryServiceClient, purchaseOrderService, orderRepository, new OrderMapper());
+                inventoryServiceClient, purchaseOrderService, orderRepository, new OrderMapper(),
+                paymentClient, outboxWriter);
     }
 
     @Test
@@ -148,6 +157,7 @@ class SalesOrderServiceTest {
         CreateOrderRequest request = new CreateOrderRequest();
         request.setCustomerId("CUST-1");
         request.setDeliveryRegion("MUMBAI");
+        request.setCarrierCode("BLUEDART");
 
         OrderItemRequest skuItem = new OrderItemRequest();
         skuItem.setSkuNumber("SKU-1");
@@ -201,11 +211,88 @@ class SalesOrderServiceTest {
         verify(inventoryServiceClient, times(1)).release(anyString());
     }
 
+    @Test
+    @DisplayName("anything shipped: an invoice is requested and, on success, queued to the outbox")
+    void shippedOrderGeneratesAnInvoice() {
+
+        when(orderRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(inventoryServiceClient.fulfill(eq("SKU-1"), eq("MUMBAI"), eq(4), anyString()))
+                .thenReturn(new InventoryServiceClient.FulfillmentResult(
+                        1L, new BigDecimal("70.00"), new BigDecimal("1.500"),
+                        4, 0,
+                        List.of(new InventoryServiceClient.FulfillmentResult.Allocation("WH-MUMBAI", 4)),
+                        "WH-MUMBAI"));
+        when(paymentClient.generateInvoice(anyString(), eq("BLUEDART"), any()))
+                .thenReturn(new PaymentClient.InvoiceResult("inv-1", new BigDecimal("295.00")));
+
+        salesOrderService.create(requestWithOneItem("SKU-1", 4, "MUMBAI"));
+
+        ArgumentCaptor<List<PaymentClient.InvoiceLine>> linesCaptor = ArgumentCaptor.forClass(List.class);
+        verify(paymentClient).generateInvoice(anyString(), eq("BLUEDART"), linesCaptor.capture());
+        assertThat(linesCaptor.getValue()).hasSize(1);
+        assertThat(linesCaptor.getValue().getFirst().skuNumber()).isEqualTo("SKU-1");
+        assertThat(linesCaptor.getValue().getFirst().quantity()).isEqualTo(4);
+
+        verify(outboxWriter).writeInvoiceGenerated(
+                anyString(), eq("CUST-1"), eq("inv-1"), eq(new BigDecimal("295.00")));
+    }
+
+    @Test
+    @DisplayName("nothing shipped: no invoice is requested for a zero-amount order")
+    void whollyBackorderedOrderSkipsInvoicing() {
+
+        when(orderRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(inventoryServiceClient.fulfill(eq("SKU-1"), eq("MUMBAI"), eq(5), anyString()))
+                .thenReturn(new InventoryServiceClient.FulfillmentResult(
+                        1L, new BigDecimal("70.00"), new BigDecimal("1.500"),
+                        0, 5, List.of(), "WH-MUMBAI"));
+
+        salesOrderService.create(requestWithOneItem("SKU-1", 5, "MUMBAI"));
+
+        verify(paymentClient, never()).generateInvoice(any(), any(), any());
+        verify(outboxWriter, never()).writeInvoiceGenerated(any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("payment-service unavailable for invoicing: the order still stands, nothing is queued")
+    void invoiceUnavailableDoesNotFailTheOrder() {
+
+        when(orderRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(inventoryServiceClient.fulfill(eq("SKU-1"), eq("MUMBAI"), eq(4), anyString()))
+                .thenReturn(new InventoryServiceClient.FulfillmentResult(
+                        1L, new BigDecimal("70.00"), new BigDecimal("1.500"),
+                        4, 0,
+                        List.of(new InventoryServiceClient.FulfillmentResult.Allocation("WH-MUMBAI", 4)),
+                        "WH-MUMBAI"));
+        when(paymentClient.generateInvoice(any(), any(), any())).thenReturn(null);
+
+        OrderResponse response = salesOrderService.create(requestWithOneItem("SKU-1", 4, "MUMBAI"));
+
+        assertThat(response.status()).isEqualTo(OrderStatus.INVENTORY_RESERVED);
+        verify(outboxWriter, never()).writeInvoiceGenerated(any(), any(), any(), any());
+        verify(inventoryServiceClient, never()).release(any());
+    }
+
+    @Test
+    @DisplayName("missing carrierCode is rejected before any inventory call is made")
+    void missingCarrierCodeIsRejected() {
+
+        CreateOrderRequest request = requestWithOneItem("SKU-1", 4, "MUMBAI");
+        request.setCarrierCode(null);
+
+        assertThatThrownBy(() -> salesOrderService.create(request))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("carrierCode");
+
+        verify(inventoryServiceClient, never()).fulfill(any(), any(), any(), any());
+    }
+
     private CreateOrderRequest requestWithOneItem(String sku, int quantity, String region) {
 
         CreateOrderRequest request = new CreateOrderRequest();
         request.setCustomerId("CUST-1");
         request.setDeliveryRegion(region);
+        request.setCarrierCode("BLUEDART");
 
         OrderItemRequest item = new OrderItemRequest();
         item.setSkuNumber(sku);

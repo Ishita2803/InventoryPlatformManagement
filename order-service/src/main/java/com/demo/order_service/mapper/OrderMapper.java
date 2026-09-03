@@ -60,7 +60,8 @@ public class OrderMapper {
                 items,
                 order.getCreatedAt(),
                 order.getUpdatedAt(),
-                order.getDeliveryRegion()
+                order.getDeliveryRegion(),
+                order.getCarrierCode()
         );
     }
 
@@ -82,7 +83,8 @@ public class OrderMapper {
                 item.getSkuNumber(),
                 item.getQuantity(),
                 item.getUnitPrice(),
-                item.lineTotal()
+                item.lineTotal(),
+                item.getUnitWeight()
         );
     }
 

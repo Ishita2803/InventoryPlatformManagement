@@ -18,6 +18,7 @@ public record OrderResponse(
         List<OrderItemResponse> items,
         Instant createdAt,
         Instant updatedAt,
-        String deliveryRegion
+        String deliveryRegion,
+        String carrierCode
 ) {
 }
