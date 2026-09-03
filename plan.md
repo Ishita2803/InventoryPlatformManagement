@@ -1299,6 +1299,41 @@ verified against the real deployed system, in order, without skipping ahead.
 
 ---
 
+## Post-D11 — Storefront redesign ✅ *(done 2026-09-03)*
+
+Not a numbered phase — a polish pass on Phase D10's four pages, requested after Part D
+landed: make them read as a real e-commerce portal rather than an API test harness, and
+stop showing the browser data the frontend doesn't need.
+
+- [x] `customer.html` becomes an actual storefront: a product catalog grid (name, price,
+      weight — never the vendor's cost price), an in-page cart, and a checkout that
+      abstracts "sales order" vs "direct order" into a "delivery method" choice, with a
+      region/carrier picker built from real warehouse/carrier data instead of free-text
+      fields.
+- [x] `vendor.html`/`carrier.html` become dashboards (stat cards, product/rate cards, a
+      shipments/PO list) instead of raw forms-and-tables.
+- [x] `admin.html` gains tabs (Dashboard / Onboarding / Purchase Orders) so the profit
+      report is the first thing seen, not buried under six stacked forms.
+- [x] The raw request/response log every page already had moved into a collapsed
+      `<details>` "Developer log" at the bottom — still there for demoing real API
+      traffic, no longer the first thing a user sees.
+- [x] **Backend change**: `CatalogItemResponse` gains `productName`, denormalized from
+      inventory-service's own `Product` row (already populated since the D6 fix), so the
+      storefront renders a real product name in one call — without the browser ever
+      fetching vendor-service's cost price the way a raw vendor-product lookup would.
+- [x] **Backend change**: `GET /api/carrier/carriers` broadened from `ADMIN`-only to any
+      authenticated role — checkout needs a carrier list for its shipping-method
+      dropdown, and a carrier directory (name/code, published rates) was never sensitive
+      the way a vendor's cost price is.
+
+**Exit:** met, verified live: the catalog endpoint now returns a real `productName`; the
+carrier list is reachable with a `CUSTOMER` token (`200`, previously `403`); a checkout
+placed through the new request shape (`carrierCode` + `deliveryRegion` + sku/quantity
+items) still produces a correct `INVENTORY_RESERVED` order exactly as Phase D7 built it;
+all four redesigned pages load (`200`) from the real gateway.
+
+---
+
 ## Resume discipline
 
 Claim a capability **only after it is implemented and tested.** Interviewers ask about

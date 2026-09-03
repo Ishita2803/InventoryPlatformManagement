@@ -626,6 +626,39 @@ A 200 with **empty** `propertySources` means the filename doesn't match
 
 Newest first. Add an entry for every meaningful change.
 
+### 2026-09-03 — Post-D11: storefront redesign for the four frontend pages
+- **`customer.html` becomes an actual storefront** rather than a raw API test harness:
+  a product catalog grid (name/price/weight, never the vendor's cost price), an in-page
+  cart, and a checkout that abstracts "sales order" vs "direct order" (Phase D7/D9's own
+  internal distinction) into a single "delivery method" choice a shopper actually
+  understands. Region and carrier are now picked from real data (warehouses, carriers)
+  instead of free-text fields a user could mistype.
+- **`vendor.html`/`carrier.html` become dashboards**: stat cards, product/rate cards, a
+  shipments/PO list — the same underlying API calls Phase D10 built, presented as a
+  seller/carrier console instead of stacked forms and raw tables.
+- **`admin.html` gains tabs** (Dashboard/Onboarding/Purchase Orders) so the Phase D11
+  profit report is the first thing an admin sees, not the sixth section down the page.
+- **The raw request/response log moved into a collapsed `<details>`** at the bottom of
+  every page -- still there, still useful for demoing real API traffic in an interview,
+  no longer the first thing a user's eye lands on.
+- **`CatalogItemResponse` gains `productName`**, denormalized from inventory-service's
+  own `Product` row (already populated since the D6 fix that upserts it at pricing time)
+  -- lets the storefront render a real product name in one call, and specifically
+  *without* the browser ever receiving vendor-service's cost price the way calling its
+  raw product-by-sku lookup would have. Considered and rejected: broadening
+  `GET /api/vendor/products/by-sku/**` to all roles, which would have leaked
+  `costPrice` (Impulse's margin) straight to a customer's network tab -- the sale price
+  vs. cost price separation Phase D5 built specifically to avoid this stayed intact by
+  choosing server-side enrichment over a wider-open endpoint.
+- **`GET /api/carrier/carriers` broadened from `ADMIN`-only to any authenticated role** --
+  checkout needs a carrier list to build its shipping-method dropdown. A carrier
+  directory (name/code, published weight-tier rates) was never sensitive the way a
+  vendor's cost price is, so this one really was safe to open up.
+- **Verified live**: catalog returns real product names; the carrier list is reachable
+  with a `CUSTOMER` token (previously `403`); a checkout placed through the new request
+  shape still produces a correct order through the exact D7 fulfillment path; all four
+  redesigned pages return `200`.
+
 ### 2026-09-03 — Phase D11 complete: profit reporting (Part D now fully complete)
 - **`ProfitReportService`** (`order-service`): `Σ (salePrice − costPrice) × quantitySold`,
   one line per sku that's actually sold something — a shipped Phase D7 sales-order row,
