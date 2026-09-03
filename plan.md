@@ -1161,6 +1161,39 @@ the backordered amount; the legacy demo order flow is unaffected and still start
 
 ---
 
+## Phase D8 — Billing & invoicing ✅ *(done 2026-09-03)*
+
+- [x] `payment-service`'s new `InvoiceService`: `shipQuantity × salePrice` summed across
+      every shipped line, plus one weight-based carrier surcharge for the whole order
+      (`Σ unitWeight × shipQuantity`, priced via a new synchronous call to carrier-service's
+      `WeightTierService.surchargeFor` -- built in D4, never called from outside
+      carrier-service until now). Idempotent by orderId, same in-memory-map shape as the
+      existing `PaymentService.pay` -- this service still has no database.
+- [x] `carrier-service` exposes the surcharge lookup via a new internal endpoint
+      (`GET /api/carrier/carriers/{code}/surcharge`), 404 for an unknown carrier code
+      rather than silently pricing at zero.
+- [x] `CreateOrderRequest`/`Order` gain `carrierCode`; `OrderItem` gains `unitWeight`
+      (denormalized from the D7 fulfillment search's answer, the same "fetch once at the
+      moment that needs it" pattern D5's `CatalogService` and D7's `SalesOrderService`
+      already use).
+- [x] `SalesOrderService` calls payment-service synchronously right after a sales order is
+      persisted, reusing `PaymentClient`'s existing circuit breaker (same downstream
+      dependency as a charge) but **failing open**, not closed: a billing hiccup after
+      stock has already shipped is not a reason to unwind a shipment that already
+      happened, unlike `pay`'s fail-closed cancel-and-release behaviour.
+- [x] On success, the invoice is queued to notification-service through the existing
+      outbox pattern (`InvoiceGenerated` event/topic) -- the same choreography Phase 6
+      built for order-confirmed/failed notifications, extended rather than replaced.
+- [x] Nothing is invoiced for a wholly-backordered order (zero shipped = no real invoice).
+
+**Exit:** met, verified live: an order's invoice (lineTotal + a real weight-tiered
+carrier surcharge) matched a hand computation exactly (225.00 + 25.00 = 250.00 for 3
+units at a known sale price and unit weight, against a carrier with real configured
+tiers); an unconfigured carrier priced its surcharge at zero rather than erroring; the
+email was sent (as with every other notification in this project, a logged mock).
+
+---
+
 ## Resume discipline
 
 Claim a capability **only after it is implemented and tested.** Interviewers ask about

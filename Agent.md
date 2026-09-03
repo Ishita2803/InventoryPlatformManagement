@@ -626,6 +626,44 @@ A 200 with **empty** `propertySources` means the filename doesn't match
 
 Newest first. Add an entry for every meaningful change.
 
+### 2026-09-03 — Phase D8 complete: billing and invoicing for sales orders
+- **`payment-service`'s new `InvoiceService`**: `shipQuantity × salePrice` per shipped
+  line, plus one weight-based carrier surcharge for the whole order. Idempotent by
+  orderId (an in-memory map, same shape as the existing `PaymentService.decisions` --
+  this service still has no database, a deliberate scope cut stated plainly).
+- **`carrier-service` finally gets a caller for `WeightTierService.surchargeFor`** —
+  built in Phase D4, three phases before anything used it, exactly the "prove the
+  mechanism before the phase that needs it" discipline Phase D1 established for tracing.
+  New endpoint `GET /api/carrier/carriers/{code}/surcharge`, 404 for an unknown carrier
+  rather than a silently-zero surcharge.
+- **`Order`/`OrderItem` gain `carrierCode`/`unitWeight`** — both nullable, both only set
+  on a Phase D7 sales order, denormalized at fulfillment time the same way D5's
+  `CatalogService` and D7's `SalesOrderService` already denormalize price/weight data.
+  Being brand-new columns (not a relaxed constraint like D7's trap #55), `ddl-auto:
+  update` added them to the live database with no manual intervention needed.
+- **`SalesOrderService` calls payment-service synchronously**, right after the order is
+  persisted, reusing `PaymentClient`'s existing circuit breaker (same downstream
+  dependency `pay` already protects) but with the **opposite failure policy**: `pay`
+  fails closed (cancels the order, releases stock) because an uncharged shipment is a
+  real loss; the new `generateInvoice` fails open (logs a warning, order stands, no
+  invoice sent) because by the time this call happens the order has already shipped —
+  undoing a correct shipment over a billing hiccup would be a worse outcome than a late
+  invoice.
+- **On success, `InvoiceGenerated` is queued through the existing outbox** (new event +
+  topic, same shape as every other event this service publishes) and consumed by
+  notification-service's new `InvoiceEventListener` — the exact choreography Phase 6
+  built for order-confirmed/failed notifications, just one more event type on it.
+- **Nothing is invoiced for a wholly-backordered order** — `SalesOrderService` skips the
+  call entirely when nothing shipped, since an invoice for zero is not a real invoice.
+- **Verified live, three scenarios**: a real order (3 units, known sale price and unit
+  weight, a carrier with configured weight tiers) produced an invoice matching a hand
+  computation exactly (225.00 line total + 25.00 weight surcharge = 250.00, confirmed
+  from `payment-service`'s own log line before Kafka even carried it); an unconfigured
+  carrier (no weight tiers) priced its surcharge at zero rather than erroring; both
+  orders' stock reservations matched exactly, and notification-service logged the
+  "email" for both. Full test suites (order-service 73 tests, payment-service 7,
+  carrier-service 4, notification-service 6) still green.
+
 ### 2026-09-03 — Phase D7 complete: sales-order fulfillment search, partial ship, auto-backorder
 - **`SalesOrderService`** (new, `order-service`): resolves a sales order's fulfillment
   **synchronously**, at creation time — a deliberate divergence from the legacy demo
