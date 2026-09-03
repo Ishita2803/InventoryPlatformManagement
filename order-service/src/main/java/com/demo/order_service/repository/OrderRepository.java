@@ -28,6 +28,12 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
     @EntityGraph(attributePaths = "items")
     Page<Order> findAllBy(Pageable pageable);
 
+    /** Phase D10: a carrier's own view of the orders assigned to them, scoped by
+     * {@code carrierCode} from the caller's verified JWT -- never a client-supplied
+     * query param, same ownership pattern every other role-scoped endpoint uses. */
+    @EntityGraph(attributePaths = "items")
+    Page<Order> findByCarrierCode(String carrierCode, Pageable pageable);
+
     /**
      * Orders that have sat in one status longer than they should have.
      *

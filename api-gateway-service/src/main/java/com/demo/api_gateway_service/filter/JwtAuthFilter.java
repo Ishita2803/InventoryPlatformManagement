@@ -109,6 +109,11 @@ public class JwtAuthFilter extends OncePerRequestFilter {
         // forwarded as X-User-Business-Id, never a client-supplied query param).
         ROUTE_ROLES.put("POST /api/purchase-orders", Set.of("ADMIN"));
         ROUTE_ROLES.put("GET /api/purchase-orders", Set.of("ADMIN", "VENDOR"));
+
+        // Phase D10: a carrier's own assigned-orders view, for carrier.html. More specific
+        // than -- and declared before -- the unlisted, still-ungated GET /api/orders/**
+        // demo.html has always used unauthenticated; this new path is the only one gated.
+        ROUTE_ROLES.put("GET /api/orders/assigned", Set.of("CARRIER"));
     }
 
     private static final AntPathMatcher PATH_MATCHER = new AntPathMatcher();

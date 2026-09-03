@@ -72,6 +72,14 @@ public class OrderTxService {
                 .getContent();
     }
 
+    /** Phase D10: a carrier's own assigned-orders view. */
+    @Transactional(readOnly = true)
+    public List<OrderResponse> listOrdersForCarrier(String carrierCode, Pageable pageable) {
+        return orderRepository.findByCarrierCode(carrierCode, pageable)
+                .map(orderMapper::toResponse)
+                .getContent();
+    }
+
     @Transactional
     public OrderResponse transitionOrder(String orderId, OrderStatus target) {
 

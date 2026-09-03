@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Impulse — Customer</title>
+<link rel="stylesheet" href="common.css">
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>Impulse — Customer</h1>
+    <p>Place sales orders (warehouse-fulfilled) and direct orders (straight from the vendor).</p>
+  </div>
+  <div>
+    <nav><a href="admin.html">Admin</a><a href="vendor.html">Vendor</a><a href="carrier.html">Carrier</a></nav>
+    <div id="whoami" class="whoami"></div>
+  </div>
+</header>
+
+<main>
+
+  <section id="loginPanel" class="login-panel">
+    <h2>Sign in <small>CUSTOMER</small></h2>
+    <div class="row">
+      <div class="field"><label>Username</label><input id="loginUser" value="customer-demo"></div>
+      <div class="field"><label>Password</label><input id="loginPass" type="password" value="customer-demo-pass"></div>
+      <button onclick="login()">Sign in</button>
+    </div>
+    <div id="loginMsg" class="msg"></div>
+    <p class="sub">An admin onboards customers from <a href="admin.html">admin.html</a>; sign in with the credentials given at onboarding time.</p>
+  </section>
+
+  <section class="gate">
+    <h2>Place a sales order <small>fulfilled from a warehouse, region-matched</small></h2>
+    <p class="sub">Never rejected: ships whatever stock is available and auto-backorders any shortfall.</p>
+    <div class="row">
+      <div class="field"><label>Sku number</label><input id="soSku" value="ACME-WIDGET-A"></div>
+      <div class="field"><label>Quantity</label><input id="soQty" value="2" type="number"></div>
+      <div class="field"><label>Delivery region</label><input id="soRegion" value="MUMBAI"></div>
+      <div class="field"><label>Carrier code</label><input id="soCarrier" value="DTDC"></div>
+      <button onclick="placeSalesOrder()">Place sales order</button>
+    </div>
+    <div id="soMsg" class="msg"></div>
+  </section>
+
+  <section class="gate">
+    <h2>Place a direct order <small>ships straight from the vendor, no warehouse</small></h2>
+    <div class="row">
+      <div class="field"><label>Sku number</label><input id="doSku" value="ACME-WIDGET-A"></div>
+      <div class="field"><label>Quantity</label><input id="doQty" value="2" type="number"></div>
+      <div class="field"><label>Carrier code</label><input id="doCarrier" value="DTDC"></div>
+      <button onclick="placeDirectOrder()">Place direct order</button>
+    </div>
+    <div id="doMsg" class="msg"></div>
+  </section>
+
+  <section class="gate">
+    <h2>Check an order's status</h2>
+    <div class="row">
+      <div class="field" style="width:340px;"><label>Order ID</label><input id="lookupOrderId" style="width:100%" placeholder="paste an orderId from above"></div>
+      <button class="secondary" onclick="lookupOrder()">Check status</button>
+    </div>
+    <div id="lookupMsg" class="msg"></div>
+    <pre id="lookupResult" style="margin-top:10px; display:none;"></pre>
+  </section>
+
+  <div class="log-title">Last request / response</div>
+  <pre id="log">Nothing sent yet.</pre>
+
+</main>
+
+<script src="common.js"></script>
+<script>
+  restoreSessionIfPresent();
+
+  async function login() {
+    if (await doLogin('CUSTOMER', 'loginUser', 'loginPass', 'loginMsg')) showGate();
+  }
+
+  async function placeSalesOrder() {
+    const el = document.getElementById('soMsg');
+    el.className = 'msg'; el.textContent = 'Placing…';
+    try {
+      const order = await api('POST', '/api/orders', {
+        customerId: getBusinessId(),
+        deliveryRegion: document.getElementById('soRegion').value,
+        carrierCode: document.getElementById('soCarrier').value,
+        items: [{
+          skuNumber: document.getElementById('soSku').value,
+          quantity: Number(document.getElementById('soQty').value)
+        }]
+      });
+      const shipped = order.items.filter(i => i.warehouseId).reduce((s, i) => s + i.quantity, 0);
+      const backordered = order.items.filter(i => !i.warehouseId).reduce((s, i) => s + i.quantity, 0);
+      el.className = 'msg ok';
+      el.textContent = `Order ${order.orderId} — shipped ${shipped}, backordered ${backordered}, total ${order.totalAmount}`;
+      document.getElementById('lookupOrderId').value = order.orderId;
+    } catch (e) {
+      el.className = 'msg error'; el.textContent = 'Failed: ' + (e.body && (e.body.message || JSON.stringify(e.body.fieldErrors)) || e.status);
+    }
+  }
+
+  async function placeDirectOrder() {
+    const el = document.getElementById('doMsg');
+    el.className = 'msg'; el.textContent = 'Placing…';
+    try {
+      const order = await api('POST', '/api/orders', {
+        customerId: getBusinessId(),
+        carrierCode: document.getElementById('doCarrier').value,
+        direct: true,
+        items: [{
+          skuNumber: document.getElementById('doSku').value,
+          quantity: Number(document.getElementById('doQty').value)
+        }]
+      });
+      el.className = 'msg ok'; el.textContent = `Direct order ${order.orderId} placed — total ${order.totalAmount}`;
+      document.getElementById('lookupOrderId').value = order.orderId;
+    } catch (e) {
+      el.className = 'msg error'; el.textContent = 'Failed: ' + (e.body && (e.body.message || JSON.stringify(e.body.fieldErrors)) || e.status);
+    }
+  }
+
+  async function lookupOrder() {
+    const el = document.getElementById('lookupMsg');
+    const out = document.getElementById('lookupResult');
+    const orderId = document.getElementById('lookupOrderId').value.trim();
+    if (!orderId) { el.className = 'msg error'; el.textContent = 'Enter an order ID first.'; out.style.display = 'none'; return; }
+    el.className = 'msg'; el.textContent = 'Looking up…';
+    try {
+      const order = await api('GET', `/api/orders/${orderId}`);
+      el.className = 'msg ok'; el.textContent = `Status: ${order.status}`;
+      out.style.display = 'block'; out.textContent = JSON.stringify(order, null, 2);
+    } catch (e) {
+      el.className = 'msg error'; el.textContent = 'Failed: ' + (e.body && e.body.message || e.status);
+      out.style.display = 'none';
+    }
+  }
+</script>
+
+</body>
+</html>

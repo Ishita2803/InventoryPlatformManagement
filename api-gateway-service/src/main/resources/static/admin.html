@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Impulse — Admin</title>
+<link rel="stylesheet" href="common.css">
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>Impulse — Admin</h1>
+    <p>Onboard vendors, customers and carriers; place stocking purchase orders.</p>
+  </div>
+  <div>
+    <nav><a href="demo.html">Order/inventory demo</a><a href="vendor.html">Vendor</a><a href="customer.html">Customer</a><a href="carrier.html">Carrier</a></nav>
+    <div id="whoami" class="whoami"></div>
+  </div>
+</header>
+
+<main>
+
+  <section id="loginPanel" class="login-panel">
+    <h2>Sign in <small>ADMIN</small></h2>
+    <div class="row">
+      <div class="field"><label>Username</label><input id="loginUser" value="admin"></div>
+      <div class="field"><label>Password</label><input id="loginPass" type="password" value="admin-demo-pass"></div>
+      <button onclick="login()">Sign in</button>
+    </div>
+    <div id="loginMsg" class="msg"></div>
+  </section>
+
+  <section class="gate">
+    <h2>Onboard a vendor</h2>
+    <div class="row">
+      <div class="field"><label>Name</label><input id="vName" value="Acme Supplies"></div>
+      <div class="field"><label>Username</label><input id="vUser" value="acme-vendor"></div>
+      <div class="field"><label>Password</label><input id="vPass" value="vendorpass1"></div>
+      <button onclick="onboardVendor()">Onboard vendor</button>
+    </div>
+    <div id="vMsg" class="msg"></div>
+  </section>
+
+  <section class="gate">
+    <h2>Onboard a customer</h2>
+    <div class="row">
+      <div class="field"><label>Name</label><input id="cName" value="Vijay Sales"></div>
+      <div class="field"><label>Email</label><input id="cEmail" value="vijay@example.com"></div>
+      <div class="field"><label>Username</label><input id="cUser" value="vijay-customer"></div>
+      <div class="field"><label>Password</label><input id="cPass" value="customerpass1"></div>
+    </div>
+    <div class="row">
+      <div class="field"><label>Billing line</label><input id="cBillLine" value="1 MG Road"></div>
+      <div class="field"><label>Billing city</label><input id="cBillCity" value="Mumbai"></div>
+      <div class="field"><label>Billing region</label><input id="cBillRegion" value="MUMBAI"></div>
+    </div>
+    <div class="row">
+      <div class="field"><label>Shipping line</label><input id="cShipLine" value="1 MG Road"></div>
+      <div class="field"><label>Shipping city</label><input id="cShipCity" value="Mumbai"></div>
+      <div class="field"><label>Shipping region</label><input id="cShipRegion" value="MUMBAI"></div>
+      <button onclick="onboardCustomer()">Onboard customer</button>
+    </div>
+    <div id="cMsg" class="msg"></div>
+  </section>
+
+  <section class="gate">
+    <h2>Onboard a carrier</h2>
+    <div class="row">
+      <div class="field"><label>Carrier code</label><input id="carCode" value="DTDC"></div>
+      <div class="field"><label>Carrier name</label><input id="carName" value="DTDC Express"></div>
+      <div class="field"><label>Username</label><input id="carUser" value="dtdc-carrier"></div>
+      <div class="field"><label>Password</label><input id="carPass" value="carrierpass1"></div>
+      <button onclick="onboardCarrier()">Onboard carrier</button>
+    </div>
+    <div id="carMsg" class="msg"></div>
+  </section>
+
+  <section class="gate">
+    <h2>Place a stocking purchase order <small>admin only, purpose=STOCKING</small></h2>
+    <div class="row">
+      <div class="field"><label>Sku number</label><input id="poSku" value="ACME-WIDGET-A"></div>
+      <div class="field"><label>Quantity</label><input id="poQty" value="20" type="number"></div>
+      <div class="field"><label>Warehouse ID</label><input id="poWarehouse" value="WH-MUMBAI"></div>
+      <button onclick="placePurchaseOrder()">Place purchase order</button>
+      <button class="secondary" onclick="listPurchaseOrders()">Refresh list</button>
+    </div>
+    <div id="poMsg" class="msg"></div>
+    <table id="poTable" style="display:none;">
+      <thead><tr><th>PO ID</th><th>Vendor</th><th>Sku</th><th>Qty</th><th>Warehouse</th><th>Purpose</th><th>Status</th></tr></thead>
+      <tbody id="poTableBody"></tbody>
+    </table>
+  </section>
+
+  <div class="log-title">Last request / response</div>
+  <pre id="log">Nothing sent yet.</pre>
+
+</main>
+
+<script src="common.js"></script>
+<script>
+  restoreSessionIfPresent();
+
+  async function login() {
+    if (await doLogin('ADMIN', 'loginUser', 'loginPass', 'loginMsg')) {
+      showGate();
+      listPurchaseOrders();
+    }
+  }
+
+  async function onboardVendor() {
+    const el = document.getElementById('vMsg');
+    el.className = 'msg'; el.textContent = 'Onboarding…';
+    try {
+      const vendor = await api('POST', '/api/vendor/onboard', {
+        name: document.getElementById('vName').value,
+        username: document.getElementById('vUser').value,
+        password: document.getElementById('vPass').value
+      });
+      el.className = 'msg ok'; el.textContent = `Onboarded vendor ${vendor.vendorId} (${vendor.name})`;
+    } catch (e) {
+      el.className = 'msg error'; el.textContent = 'Failed: ' + (e.body && (e.body.message || JSON.stringify(e.body.fieldErrors)) || e.status);
+    }
+  }
+
+  async function onboardCustomer() {
+    const el = document.getElementById('cMsg');
+    el.className = 'msg'; el.textContent = 'Onboarding…';
+    try {
+      const customer = await api('POST', '/api/customer/onboard', {
+        name: document.getElementById('cName').value,
+        email: document.getElementById('cEmail').value,
+        username: document.getElementById('cUser').value,
+        password: document.getElementById('cPass').value,
+        defaultBillingAddress: {
+          line: document.getElementById('cBillLine').value,
+          city: document.getElementById('cBillCity').value,
+          region: document.getElementById('cBillRegion').value
+        },
+        defaultShippingAddress: {
+          line: document.getElementById('cShipLine').value,
+          city: document.getElementById('cShipCity').value,
+          region: document.getElementById('cShipRegion').value
+        }
+      });
+      el.className = 'msg ok'; el.textContent = `Onboarded customer ${customer.customerNo} (${customer.name})`;
+    } catch (e) {
+      el.className = 'msg error'; el.textContent = 'Failed: ' + (e.body && (e.body.message || JSON.stringify(e.body.fieldErrors)) || e.status);
+    }
+  }
+
+  async function onboardCarrier() {
+    const el = document.getElementById('carMsg');
+    el.className = 'msg'; el.textContent = 'Onboarding…';
+    try {
+      const carrier = await api('POST', '/api/carrier/onboard', {
+        carrierCode: document.getElementById('carCode').value,
+        carrierName: document.getElementById('carName').value,
+        username: document.getElementById('carUser').value,
+        password: document.getElementById('carPass').value
+      });
+      el.className = 'msg ok'; el.textContent = `Onboarded carrier ${carrier.carrierCode} (${carrier.carrierName})`;
+    } catch (e) {
+      el.className = 'msg error'; el.textContent = 'Failed: ' + (e.body && (e.body.message || JSON.stringify(e.body.fieldErrors)) || e.status);
+    }
+  }
+
+  async function placePurchaseOrder() {
+    const el = document.getElementById('poMsg');
+    el.className = 'msg'; el.textContent = 'Placing…';
+    try {
+      const po = await api('POST', '/api/purchase-orders', {
+        skuNumber: document.getElementById('poSku').value,
+        quantity: Number(document.getElementById('poQty').value),
+        warehouseId: document.getElementById('poWarehouse').value
+      });
+      el.className = 'msg ok'; el.textContent = `Placed purchase order ${po.purchaseOrderId} (${po.status})`;
+      listPurchaseOrders();
+    } catch (e) {
+      el.className = 'msg error'; el.textContent = 'Failed: ' + (e.body && (e.body.message || JSON.stringify(e.body.fieldErrors)) || e.status);
+    }
+  }
+
+  async function listPurchaseOrders() {
+    try {
+      const orders = await api('GET', '/api/purchase-orders');
+      const table = document.getElementById('poTable');
+      const tbody = document.getElementById('poTableBody');
+      tbody.innerHTML = orders.map(po => `
+        <tr>
+          <td><code>${po.purchaseOrderId.slice(0, 8)}…</code></td>
+          <td>${po.vendorId ? po.vendorId.slice(0, 8) + '…' : ''}</td>
+          <td>${po.skuNumber}</td>
+          <td>${po.quantity}</td>
+          <td>${po.warehouseId || '—'}</td>
+          <td>${po.purpose}</td>
+          <td><span class="badge ${po.status}">${po.status}</span></td>
+        </tr>`).join('');
+      table.style.display = orders.length ? 'table' : 'none';
+    } catch (e) { /* ignore -- log panel already shows the failure */ }
+  }
+</script>
+
+</body>
+</html>

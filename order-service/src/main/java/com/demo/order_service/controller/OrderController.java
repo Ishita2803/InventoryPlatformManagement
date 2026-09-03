@@ -58,4 +58,24 @@ public class OrderController {
                 )
         );
     }
+
+    /**
+     * Phase D10: a carrier's own view of the orders assigned to them. {@code carrierCode}
+     * comes only from the gateway-forwarded header (the caller's verified JWT), never a
+     * client-supplied query param -- same ownership pattern every other role-scoped
+     * endpoint in this project already uses.
+     */
+    @GetMapping("/assigned")
+    public ResponseEntity<List<OrderResponse>> listAssignedOrders(
+            @RequestHeader("X-User-Business-Id") String carrierCode,
+            @RequestParam(defaultValue = "0") @Min(0) int page,
+            @RequestParam(defaultValue = "20") @Min(1) @Max(100) int size
+    ) {
+
+        return ResponseEntity.ok(
+                orderService.listOrdersForCarrier(
+                        carrierCode, PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "createdAt"))
+                )
+        );
+    }
 }

@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Impulse — Vendor</title>
+<link rel="stylesheet" href="common.css">
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>Impulse — Vendor</h1>
+    <p>Manage your product catalog; see your purchase-order history.</p>
+  </div>
+  <div>
+    <nav><a href="admin.html">Admin</a><a href="customer.html">Customer</a><a href="carrier.html">Carrier</a></nav>
+    <div id="whoami" class="whoami"></div>
+  </div>
+</header>
+
+<main>
+
+  <section id="loginPanel" class="login-panel">
+    <h2>Sign in <small>VENDOR</small></h2>
+    <div class="row">
+      <div class="field"><label>Username</label><input id="loginUser" value="vendor-demo"></div>
+      <div class="field"><label>Password</label><input id="loginPass" type="password" value="vendor-demo-pass"></div>
+      <button onclick="login()">Sign in</button>
+    </div>
+    <div id="loginMsg" class="msg"></div>
+    <p class="sub">An admin onboards vendors from <a href="admin.html">admin.html</a>; sign in with the credentials given at onboarding time.</p>
+  </section>
+
+  <section class="gate">
+    <h2>Add a product</h2>
+    <div class="row">
+      <div class="field"><label>Product name</label><input id="pName" value="Widget B"></div>
+      <div class="field"><label>Sku number</label><input id="pSku" value="ACME-WIDGET-B"></div>
+      <div class="field"><label>Description</label><input id="pDesc" value=""></div>
+      <div class="field"><label>Unit weight (kg)</label><input id="pWeight" value="2.000"></div>
+      <div class="field"><label>Cost price</label><input id="pCost" value="40.00"></div>
+      <button onclick="addProduct()">Add product</button>
+    </div>
+    <div id="pMsg" class="msg"></div>
+  </section>
+
+  <section class="gate">
+    <h2>Your products</h2>
+    <div class="row"><button class="secondary" onclick="listProducts()">Refresh</button></div>
+    <table id="productTable" style="display:none;">
+      <thead><tr><th>Product ID</th><th>Name</th><th>Sku</th><th>Weight</th><th>Cost price</th><th></th></tr></thead>
+      <tbody id="productTableBody"></tbody>
+    </table>
+  </section>
+
+  <section class="gate">
+    <h2>Your purchase-order history</h2>
+    <div class="row"><button class="secondary" onclick="listPurchaseOrders()">Refresh</button></div>
+    <table id="poTable" style="display:none;">
+      <thead><tr><th>PO ID</th><th>Sku</th><th>Qty</th><th>Warehouse</th><th>Purpose</th><th>Status</th></tr></thead>
+      <tbody id="poTableBody"></tbody>
+    </table>
+  </section>
+
+  <div class="log-title">Last request / response</div>
+  <pre id="log">Nothing sent yet.</pre>
+
+</main>
+
+<script src="common.js"></script>
+<script>
+  restoreSessionIfPresent();
+  if (getToken()) { listProducts(); listPurchaseOrders(); }
+
+  async function login() {
+    if (await doLogin('VENDOR', 'loginUser', 'loginPass', 'loginMsg')) {
+      showGate();
+      listProducts();
+      listPurchaseOrders();
+    }
+  }
+
+  async function addProduct() {
+    const el = document.getElementById('pMsg');
+    el.className = 'msg'; el.textContent = 'Adding…';
+    try {
+      const product = await api('POST', '/api/vendor/products', {
+        productName: document.getElementById('pName').value,
+        skuNumber: document.getElementById('pSku').value,
+        description: document.getElementById('pDesc').value,
+        unitWeight: Number(document.getElementById('pWeight').value),
+        costPrice: Number(document.getElementById('pCost').value)
+      });
+      el.className = 'msg ok'; el.textContent = `Added product ${product.productId} (${product.skuNumber})`;
+      listProducts();
+    } catch (e) {
+      el.className = 'msg error'; el.textContent = 'Failed: ' + (e.body && (e.body.message || JSON.stringify(e.body.fieldErrors)) || e.status);
+    }
+  }
+
+  async function removeProduct(productId) {
+    try {
+      await api('DELETE', `/api/vendor/products/${productId}`);
+      listProducts();
+    } catch (e) { /* log panel shows the failure */ }
+  }
+
+  async function listProducts() {
+    try {
+      const products = await api('GET', '/api/vendor/products');
+      const table = document.getElementById('productTable');
+      const tbody = document.getElementById('productTableBody');
+      tbody.innerHTML = products.map(p => `
+        <tr>
+          <td>${p.productId}</td>
+          <td>${p.productName}</td>
+          <td><code>${p.skuNumber}</code></td>
+          <td>${p.unitWeight}</td>
+          <td>${p.costPrice}</td>
+          <td><button class="danger" onclick="removeProduct(${p.productId})">Remove</button></td>
+        </tr>`).join('');
+      table.style.display = products.length ? 'table' : 'none';
+    } catch (e) { /* ignore -- log panel already shows the failure */ }
+  }
+
+  async function listPurchaseOrders() {
+    try {
+      const orders = await api('GET', '/api/purchase-orders');
+      const table = document.getElementById('poTable');
+      const tbody = document.getElementById('poTableBody');
+      tbody.innerHTML = orders.map(po => `
+        <tr>
+          <td><code>${po.purchaseOrderId.slice(0, 8)}…</code></td>
+          <td>${po.skuNumber}</td>
+          <td>${po.quantity}</td>
+          <td>${po.warehouseId || '—'}</td>
+          <td>${po.purpose}</td>
+          <td><span class="badge ${po.status}">${po.status}</span></td>
+        </tr>`).join('');
+      table.style.display = orders.length ? 'table' : 'none';
+    } catch (e) { /* ignore -- log panel already shows the failure */ }
+  }
+</script>
+
+</body>
+</html>
