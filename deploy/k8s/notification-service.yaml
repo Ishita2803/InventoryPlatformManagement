@@ -22,6 +22,21 @@ spec:
           envFrom:
             - configMapRef:
                 name: platform-config
+          env:
+            # Real email (Gmail SMTP) for the invoice notification. Both keys must be
+            # added to the impulse-secrets Secret by hand -- never committed here, and
+            # deliberately not run through this session's own kubectl, so a real Gmail
+            # address/app password never lands in a chat transcript or tool-call log.
+            - name: MAIL_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: impulse-secrets
+                  key: mail-username
+            - name: MAIL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: impulse-secrets
+                  key: mail-password
           resources:
             requests:
               memory: "512Mi"
