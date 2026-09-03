@@ -69,6 +69,13 @@ public class GlobalExceptionHandler {
         return body(HttpStatus.NOT_FOUND, "VENDOR_SKU_NOT_FOUND", exception.getMessage());
     }
 
+    @ExceptionHandler(CatalogItemNotFoundException.class)
+    public ResponseEntity<Map<String, Object>> handleCatalogItemNotFound(
+            CatalogItemNotFoundException exception
+    ) {
+        return body(HttpStatus.NOT_FOUND, "CATALOG_ITEM_NOT_FOUND", exception.getMessage());
+    }
+
     @ExceptionHandler(PurchaseOrderNotFoundException.class)
     public ResponseEntity<Map<String, Object>> handlePurchaseOrderNotFound(
             PurchaseOrderNotFoundException exception

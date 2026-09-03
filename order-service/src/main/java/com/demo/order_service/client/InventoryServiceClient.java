@@ -1,7 +1,9 @@
 package com.demo.order_service.client;
 
+import com.demo.order_service.exception.CatalogItemNotFoundException;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
+import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestClient;
 
 import java.math.BigDecimal;
@@ -51,10 +53,14 @@ public class InventoryServiceClient {
      * the same catalog lookup Phase D5 built for admin pricing, read-only here.
      */
     public CatalogItem getCatalogItem(String skuNumber) {
-        return restClient.get()
-                .uri("/api/inventory/catalog/{sku}", skuNumber)
-                .retrieve()
-                .body(CatalogItem.class);
+        try {
+            return restClient.get()
+                    .uri("/api/inventory/catalog/{sku}", skuNumber)
+                    .retrieve()
+                    .body(CatalogItem.class);
+        } catch (HttpClientErrorException.NotFound notFound) {
+            throw new CatalogItemNotFoundException(skuNumber);
+        }
     }
 
     private record FulfillmentRequest(String skuNumber, String region, Integer quantity, String orderId) {

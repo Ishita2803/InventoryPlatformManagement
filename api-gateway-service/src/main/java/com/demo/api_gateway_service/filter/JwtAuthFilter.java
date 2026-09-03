@@ -114,6 +114,9 @@ public class JwtAuthFilter extends OncePerRequestFilter {
         // than -- and declared before -- the unlisted, still-ungated GET /api/orders/**
         // demo.html has always used unauthenticated; this new path is the only one gated.
         ROUTE_ROLES.put("GET /api/orders/assigned", Set.of("CARRIER"));
+
+        // Phase D11: admin-only profit report, surfaced in admin.html.
+        ROUTE_ROLES.put("GET /api/analytics/profit", Set.of("ADMIN"));
     }
 
     private static final AntPathMatcher PATH_MATCHER = new AntPathMatcher();

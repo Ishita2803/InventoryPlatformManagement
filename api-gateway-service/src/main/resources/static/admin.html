@@ -92,6 +92,18 @@
     </table>
   </section>
 
+  <section class="gate">
+    <h2>Profit report <small>Σ (salePrice − costPrice) × quantity sold</small></h2>
+    <p class="sub">Today's catalog prices against all-time quantity sold -- not a true historical margin, since a re-priced sku changes what this reports for units sold before the re-price.</p>
+    <div class="row"><button class="secondary" onclick="loadProfitReport()">Load report</button></div>
+    <div id="profitMsg" class="msg"></div>
+    <table id="profitTable" style="display:none;">
+      <thead><tr><th>Sku</th><th>Qty sold</th><th>Sale price</th><th>Cost price</th><th>Profit/unit</th><th>Total profit</th></tr></thead>
+      <tbody id="profitTableBody"></tbody>
+    </table>
+    <div id="profitTotal" class="msg" style="font-weight:600;"></div>
+  </section>
+
   <div class="log-title">Last request / response</div>
   <pre id="log">Nothing sent yet.</pre>
 
@@ -105,6 +117,7 @@
     if (await doLogin('ADMIN', 'loginUser', 'loginPass', 'loginMsg')) {
       showGate();
       listPurchaseOrders();
+      loadProfitReport();
     }
   }
 
@@ -198,6 +211,30 @@
         </tr>`).join('');
       table.style.display = orders.length ? 'table' : 'none';
     } catch (e) { /* ignore -- log panel already shows the failure */ }
+  }
+
+  async function loadProfitReport() {
+    const el = document.getElementById('profitMsg');
+    el.className = 'msg'; el.textContent = 'Loading…';
+    try {
+      const report = await api('GET', '/api/analytics/profit');
+      const table = document.getElementById('profitTable');
+      const tbody = document.getElementById('profitTableBody');
+      tbody.innerHTML = report.lines.map(l => `
+        <tr>
+          <td><code>${l.skuNumber}</code></td>
+          <td>${l.quantitySold}</td>
+          <td>${l.salePrice}</td>
+          <td>${l.costPrice}</td>
+          <td>${l.profitPerUnit}</td>
+          <td>${l.totalProfit}</td>
+        </tr>`).join('');
+      table.style.display = report.lines.length ? 'table' : 'none';
+      el.className = 'msg'; el.textContent = report.lines.length ? '' : 'No sales yet.';
+      document.getElementById('profitTotal').textContent = `Total profit: ${report.totalProfit}`;
+    } catch (e) {
+      el.className = 'msg error'; el.textContent = 'Failed: ' + (e.body && e.body.message || e.status);
+    }
   }
 </script>
 

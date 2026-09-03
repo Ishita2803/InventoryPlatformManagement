@@ -38,19 +38,21 @@ public class VendorServiceClient {
                 throw new VendorSkuNotFoundException(sku);
             }
 
-            return new VendorProduct(response.vendorId(), response.unitWeight());
+            return new VendorProduct(response.vendorId(), response.unitWeight(), response.costPrice());
 
         } catch (HttpClientErrorException.NotFound notFound) {
             throw new VendorSkuNotFoundException(sku);
         }
     }
 
-    public record VendorProduct(String vendorId, BigDecimal unitWeight) {
+    /** Phase D11: {@code costPrice} added for the profit report -- what Impulse pays the
+     * vendor, needed alongside inventory-service's own sale price to compute a margin. */
+    public record VendorProduct(String vendorId, BigDecimal unitWeight, BigDecimal costPrice) {
     }
 
     private record VendorProductResponse(
             Long productId, String vendorId, String productName, String skuNumber,
-            BigDecimal unitWeight
+            BigDecimal unitWeight, BigDecimal costPrice
     ) {
     }
 }
