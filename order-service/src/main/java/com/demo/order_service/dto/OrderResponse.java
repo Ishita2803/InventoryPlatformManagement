@@ -19,6 +19,7 @@ public record OrderResponse(
         Instant createdAt,
         Instant updatedAt,
         String deliveryRegion,
-        String carrierCode
+        String carrierCode,
+        Boolean direct
 ) {
 }

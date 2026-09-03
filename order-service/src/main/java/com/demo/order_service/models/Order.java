@@ -59,6 +59,17 @@ public class Order {
     @Column(name = "carrier_code", length = 64)
     private String carrierCode;
 
+    /**
+     * Phase D9: true only for a direct order (bypasses warehouse entirely, ships straight
+     * from vendor to customer). A nullable wrapper, not a primitive {@code boolean} --
+     * exactly Agent.md trap #55's lesson applied in advance: a {@code NOT NULL} boolean
+     * added via {@code ddl-auto: update} to an already-populated table would need a
+     * default this ORM migration path cannot supply. Every pre-existing row reads back as
+     * {@code null}, treated as "not direct" everywhere this is checked.
+     */
+    @Column(name = "is_direct")
+    private Boolean direct;
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 32)
     private OrderStatus status;

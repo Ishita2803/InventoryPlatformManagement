@@ -10,6 +10,7 @@ public record PurchaseOrderFulfilledEvent(
         String skuNumber,
         Integer quantity,
         String warehouseId,
+        String purpose,
         Instant occurredAt
 ) {
 }

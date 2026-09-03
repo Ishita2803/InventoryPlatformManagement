@@ -24,6 +24,7 @@ public class OrderService {
 
     private final OrderTxService tx;
     private final SalesOrderService salesOrderService;
+    private final DirectOrderService directOrderService;
 
     /**
      * Persists the order. The event is queued in the outbox by the same transaction.
@@ -44,6 +45,9 @@ public class OrderService {
      * {@code SalesOrderService}'s class doc for why the two aren't unified.
      */
     public OrderResponse createOrder(CreateOrderRequest request) {
+        if (DirectOrderService.isDirectOrder(request)) {
+            return directOrderService.create(request);
+        }
         if (SalesOrderService.isSalesOrder(request)) {
             return salesOrderService.create(request);
         }

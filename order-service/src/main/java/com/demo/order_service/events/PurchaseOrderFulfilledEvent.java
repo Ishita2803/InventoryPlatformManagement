@@ -4,13 +4,15 @@ import java.time.Instant;
 
 /** Consumed by inventory-service, which resolves {@code skuNumber} to its own internal
  * productId and increases stock in {@code warehouseId} by {@code quantity} -- the same
- * additive {@code addInventory} machinery Phase 1 built for the admin stock-add endpoint. */
+ * additive {@code addInventory} machinery Phase 1 built for the admin stock-add endpoint.
+ * Phase D9: a {@code DIRECT} purpose skips that entirely -- see the listener. */
 public record PurchaseOrderFulfilledEvent(
         String eventId,
         String purchaseOrderId,
         String skuNumber,
         Integer quantity,
         String warehouseId,
+        String purpose,
         Instant occurredAt
 ) {
 }

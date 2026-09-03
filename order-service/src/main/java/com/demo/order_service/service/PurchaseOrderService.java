@@ -55,6 +55,18 @@ public class PurchaseOrderService {
     @Transactional
     public PurchaseOrderResponse create(CreatePurchaseOrderRequest request, PurchaseOrderPurpose purpose) {
 
+        boolean needsWarehouse = purpose != PurchaseOrderPurpose.DIRECT;
+        boolean hasWarehouse = request.getWarehouseId() != null && !request.getWarehouseId().isBlank();
+
+        if (needsWarehouse && !hasWarehouse) {
+            throw new IllegalArgumentException(
+                    "warehouseId is required for a " + purpose + " purchase order");
+        }
+        if (!needsWarehouse && hasWarehouse) {
+            throw new IllegalArgumentException(
+                    "A DIRECT purchase order never has a warehouse -- it ships straight from the vendor");
+        }
+
         VendorServiceClient.VendorProduct vendorProduct =
                 vendorServiceClient.getProductBySku(request.getSkuNumber());
 
@@ -96,7 +108,8 @@ public class PurchaseOrderService {
 
         outboxWriter.writePurchaseOrderFulfilled(
                 purchaseOrder.getPurchaseOrderId(), purchaseOrder.getSkuNumber(),
-                purchaseOrder.getQuantity(), purchaseOrder.getWarehouseId());
+                purchaseOrder.getQuantity(), purchaseOrder.getWarehouseId(),
+                purchaseOrder.getPurpose().name());
 
         log.info("Vendor {} fulfilled purchase order {}", purchaseOrder.getVendorId(), purchaseOrderId);
 

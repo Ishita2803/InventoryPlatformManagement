@@ -169,6 +169,7 @@ class OrderControllerTest {
                 Instant.parse("2026-08-25T10:00:00Z"),
                 Instant.parse("2026-08-25T10:00:00Z"),
                 null,
+                null,
                 null
         );
     }

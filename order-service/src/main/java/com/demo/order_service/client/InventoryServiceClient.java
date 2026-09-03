@@ -45,10 +45,27 @@ public class InventoryServiceClient {
                 .toBodilessEntity();
     }
 
+    /**
+     * Phase D9: a direct order still charges Impulse's own sale price for the sku (not
+     * the vendor's cost price) -- it just skips reserving warehouse stock for it. Reuses
+     * the same catalog lookup Phase D5 built for admin pricing, read-only here.
+     */
+    public CatalogItem getCatalogItem(String skuNumber) {
+        return restClient.get()
+                .uri("/api/inventory/catalog/{sku}", skuNumber)
+                .retrieve()
+                .body(CatalogItem.class);
+    }
+
     private record FulfillmentRequest(String skuNumber, String region, Integer quantity, String orderId) {
     }
 
     private record OrderReference(String orderId) {
+    }
+
+    /** Only the fields this service actually needs -- vendorId is vendor-service's own
+     * business, not ours. */
+    public record CatalogItem(String skuNumber, BigDecimal unitWeight, BigDecimal salePrice) {
     }
 
     public record FulfillmentResult(

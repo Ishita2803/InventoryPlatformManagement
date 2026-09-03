@@ -39,8 +39,16 @@ public class PurchaseOrderFulfilledListener {
             MDC.put("correlationId", correlationId);
         }
         try {
-            log.info("Received PurchaseOrderFulfilled eventId={} sku={} qty={} warehouse={}",
-                    event.eventId(), event.skuNumber(), event.quantity(), event.warehouseId());
+            log.info("Received PurchaseOrderFulfilled eventId={} sku={} qty={} warehouse={} purpose={}",
+                    event.eventId(), event.skuNumber(), event.quantity(), event.warehouseId(), event.purpose());
+
+            if ("DIRECT".equals(event.purpose())) {
+                // Phase D9: a direct order ships straight from the vendor to the customer --
+                // it never touches a warehouse, so there is nothing for this service to do.
+                log.info("Purchase order {} is DIRECT -- skipping stock, no warehouse involved",
+                        event.purchaseOrderId());
+                return;
+            }
 
             Product product = productRepository.findBySku(event.skuNumber())
                     .orElseThrow(() -> new ProductNotFoundException(

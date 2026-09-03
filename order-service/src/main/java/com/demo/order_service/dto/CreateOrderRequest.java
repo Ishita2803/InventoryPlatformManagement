@@ -27,6 +27,13 @@ public class CreateOrderRequest {
     private String carrierCode;
 
     /**
+     * Phase D9: true means bypass warehouse entirely and buy straight from the vendor.
+     * Checked before {@link SalesOrderService#isSalesOrder} -- a direct order's items also
+     * carry a {@code skuNumber}, so this flag is what actually distinguishes the two.
+     */
+    private Boolean direct;
+
+    /**
      * {@code @Valid} on the collection is what makes the per-item constraints run at all.
      * Without it an item with quantity -5 sails straight through.
      */

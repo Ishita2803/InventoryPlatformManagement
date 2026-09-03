@@ -110,11 +110,11 @@ public class OutboxWriter {
      * {@code PurchaseOrderPlacedListener}, which publishes this immediately since no real
      * vendor system exists to wait on. */
     public void writePurchaseOrderFulfilled(String purchaseOrderId, String skuNumber,
-                                             Integer quantity, String warehouseId) {
+                                             Integer quantity, String warehouseId, String purpose) {
 
         PurchaseOrderFulfilledEvent event = new PurchaseOrderFulfilledEvent(
                 UUID.randomUUID().toString(), purchaseOrderId, skuNumber, quantity,
-                warehouseId, Instant.now());
+                warehouseId, purpose, Instant.now());
 
         write(event.eventId(), "PurchaseOrder", purchaseOrderId, KafkaTopics.PURCHASE_ORDER_FULFILLED, event);
     }

@@ -61,7 +61,8 @@ public class OrderMapper {
                 order.getCreatedAt(),
                 order.getUpdatedAt(),
                 order.getDeliveryRegion(),
-                order.getCarrierCode()
+                order.getCarrierCode(),
+                order.getDirect()
         );
     }
 
