@@ -174,7 +174,8 @@ public class PaymentClient {
 
         log.info("Invoice {} generated for order {}: {}", response.invoiceId(), orderId, response.totalAmount());
 
-        return new InvoiceResult(response.invoiceId(), response.totalAmount());
+        return new InvoiceResult(
+                response.invoiceId(), response.lineTotal(), response.weightSurcharge(), response.totalAmount());
     }
 
     @SuppressWarnings("unused")
@@ -197,14 +198,15 @@ public class PaymentClient {
     public record InvoiceLine(String skuNumber, Integer quantity, BigDecimal unitPrice, BigDecimal unitWeight) {
     }
 
-    public record InvoiceResult(String invoiceId, BigDecimal totalAmount) {
+    public record InvoiceResult(String invoiceId, BigDecimal lineTotal, BigDecimal weightSurcharge, BigDecimal totalAmount) {
     }
 
     private record InvoiceRequest(String orderId, String carrierCode, java.util.List<InvoiceLine> lines) {
     }
 
-    /** Only the fields this service actually needs -- lineTotal/totalWeight/weightSurcharge
-     * are payment-service's own business, not ours. */
-    private record InvoiceResponse(String invoiceId, BigDecimal totalAmount) {
+    /** {@code totalWeight} is left out -- payment-service's own business, and not
+     * something the invoice email needs to show. */
+    private record InvoiceResponse(
+            String invoiceId, BigDecimal lineTotal, BigDecimal weightSurcharge, BigDecimal totalAmount) {
     }
 }

@@ -1,5 +1,6 @@
 package com.demo.order_service.service;
 
+import com.demo.order_service.client.CustomerServiceClient;
 import com.demo.order_service.client.InventoryServiceClient;
 import com.demo.order_service.dto.CreateOrderRequest;
 import com.demo.order_service.dto.CreatePurchaseOrderRequest;
@@ -54,13 +55,16 @@ class SalesOrderServiceTest {
     @Mock
     private OutboxWriter outboxWriter;
 
+    @Mock
+    private CustomerServiceClient customerServiceClient;
+
     private SalesOrderService salesOrderService;
 
     @org.junit.jupiter.api.BeforeEach
     void setUp() {
         salesOrderService = new SalesOrderService(
                 inventoryServiceClient, purchaseOrderService, orderRepository, new OrderMapper(),
-                paymentClient, outboxWriter);
+                paymentClient, outboxWriter, customerServiceClient);
     }
 
     @Test
@@ -223,7 +227,9 @@ class SalesOrderServiceTest {
                         List.of(new InventoryServiceClient.FulfillmentResult.Allocation("WH-MUMBAI", 4)),
                         "WH-MUMBAI"));
         when(paymentClient.generateInvoice(anyString(), eq("BLUEDART"), any()))
-                .thenReturn(new PaymentClient.InvoiceResult("inv-1", new BigDecimal("295.00")));
+                .thenReturn(new PaymentClient.InvoiceResult(
+                        "inv-1", new BigDecimal("280.00"), new BigDecimal("15.00"), new BigDecimal("295.00")));
+        when(customerServiceClient.getEmail("CUST-1")).thenReturn("cust1@example.com");
 
         salesOrderService.create(requestWithOneItem("SKU-1", 4, "MUMBAI"));
 
@@ -234,7 +240,9 @@ class SalesOrderServiceTest {
         assertThat(linesCaptor.getValue().getFirst().quantity()).isEqualTo(4);
 
         verify(outboxWriter).writeInvoiceGenerated(
-                anyString(), eq("CUST-1"), eq("inv-1"), eq(new BigDecimal("295.00")));
+                anyString(), eq("CUST-1"), eq("inv-1"), eq("BLUEDART"), any(),
+                eq(new BigDecimal("280.00")), eq(new BigDecimal("15.00")), eq(new BigDecimal("295.00")),
+                eq("cust1@example.com"));
     }
 
     @Test
@@ -250,7 +258,8 @@ class SalesOrderServiceTest {
         salesOrderService.create(requestWithOneItem("SKU-1", 5, "MUMBAI"));
 
         verify(paymentClient, never()).generateInvoice(any(), any(), any());
-        verify(outboxWriter, never()).writeInvoiceGenerated(any(), any(), any(), any());
+        verify(outboxWriter, never()).writeInvoiceGenerated(
+                any(), any(), any(), any(), any(), any(), any(), any(), any());
     }
 
     @Test
@@ -269,7 +278,8 @@ class SalesOrderServiceTest {
         OrderResponse response = salesOrderService.create(requestWithOneItem("SKU-1", 4, "MUMBAI"));
 
         assertThat(response.status()).isEqualTo(OrderStatus.INVENTORY_RESERVED);
-        verify(outboxWriter, never()).writeInvoiceGenerated(any(), any(), any(), any());
+        verify(outboxWriter, never()).writeInvoiceGenerated(
+                any(), any(), any(), any(), any(), any(), any(), any(), any());
         verify(inventoryServiceClient, never()).release(any());
     }
 

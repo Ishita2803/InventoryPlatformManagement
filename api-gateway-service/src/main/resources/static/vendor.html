@@ -83,7 +83,7 @@
 
 <script src="common.js"></script>
 <script>
-  restoreSessionIfPresent();
+  requireFreshLogin();
 
   async function login() {
     if (await doLogin('VENDOR', 'loginUser', 'loginPass', 'loginMsg')) {

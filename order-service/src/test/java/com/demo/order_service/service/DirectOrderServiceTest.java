@@ -1,5 +1,6 @@
 package com.demo.order_service.service;
 
+import com.demo.order_service.client.CustomerServiceClient;
 import com.demo.order_service.client.InventoryServiceClient;
 import com.demo.order_service.dto.CreateOrderRequest;
 import com.demo.order_service.dto.CreatePurchaseOrderRequest;
@@ -53,13 +54,16 @@ class DirectOrderServiceTest {
     @Mock
     private OutboxWriter outboxWriter;
 
+    @Mock
+    private CustomerServiceClient customerServiceClient;
+
     private DirectOrderService directOrderService;
 
     @BeforeEach
     void setUp() {
         directOrderService = new DirectOrderService(
                 inventoryServiceClient, purchaseOrderService, orderRepository, new OrderMapper(),
-                paymentClient, outboxWriter);
+                paymentClient, outboxWriter, customerServiceClient);
     }
 
     @Test
@@ -102,7 +106,9 @@ class DirectOrderServiceTest {
                 .thenReturn(new InventoryServiceClient.CatalogItem(
                         "SKU-1", new BigDecimal("1.500"), new BigDecimal("70.00")));
         when(paymentClient.generateInvoice(any(), any(), any()))
-                .thenReturn(new PaymentClient.InvoiceResult("inv-1", new BigDecimal("210.00")));
+                .thenReturn(new PaymentClient.InvoiceResult(
+                        "inv-1", new BigDecimal("210.00"), BigDecimal.ZERO, new BigDecimal("210.00")));
+        when(customerServiceClient.getEmail("CUST-1")).thenReturn("cust1@example.com");
 
         OrderResponse response = directOrderService.create(request("SKU-1", 3));
 
@@ -118,7 +124,10 @@ class DirectOrderServiceTest {
         assertThat(captor.getValue().getWarehouseId()).isNull();
         assertThat(captor.getValue().getQuantity()).isEqualTo(3);
 
-        verify(outboxWriter).writeInvoiceGenerated(any(), eq("CUST-1"), eq("inv-1"), eq(new BigDecimal("210.00")));
+        verify(outboxWriter).writeInvoiceGenerated(
+                any(), eq("CUST-1"), eq("inv-1"), eq("BLUEDART"), any(),
+                eq(new BigDecimal("210.00")), eq(BigDecimal.ZERO), eq(new BigDecimal("210.00")),
+                eq("cust1@example.com"));
     }
 
     @Test

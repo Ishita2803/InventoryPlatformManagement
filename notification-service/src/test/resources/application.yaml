@@ -16,6 +16,12 @@ spring:
     discovery:
       enabled: false
 
+  # A JavaMailSender bean just needs spring.mail.host to exist to be auto-configured --
+  # no test here actually connects to it, so a placeholder value is enough to satisfy
+  # EmailNotificationSender's constructor dependency.
+  mail:
+    host: localhost
+
   kafka:
     bootstrap-servers: localhost:9092
     listener:

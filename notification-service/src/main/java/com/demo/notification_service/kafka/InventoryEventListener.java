@@ -58,7 +58,8 @@ public class InventoryEventListener {
                     Notification.Kind.ORDER_CONFIRMED,
                     event.orderId(),
                     "Good news — we have reserved the stock for your order "
-                            + event.orderId() + " and it is being prepared."));
+                            + event.orderId() + " and it is being prepared.",
+                    null, null));
         } finally {
             MDC.remove("correlationId");
         }
@@ -81,7 +82,8 @@ public class InventoryEventListener {
                     event.orderId(),
                     "We were unable to fulfil your order " + event.orderId()
                             + ". Reason: " + event.reason()
-                            + ". You have not been charged."));
+                            + ". You have not been charged.",
+                    null, null));
         } finally {
             MDC.remove("correlationId");
         }

@@ -18,6 +18,10 @@ function clearSession() {
   sessionStorage.removeItem('impulse_businessId');
 }
 
+/** Turns an id/code containing characters that aren't valid in a DOM id (a UUID's
+ * dashes are fine, but be defensive) into something usable as one. */
+function cssId(value) { return String(value).replace(/[^a-zA-Z0-9_-]/g, '_'); }
+
 function log(label, req, res) {
   const el = document.getElementById('log');
   if (el) el.textContent = `${label}\n\n--> ${JSON.stringify(req, null, 2)}\n\n<-- ${JSON.stringify(res, null, 2)}`;
@@ -77,9 +81,11 @@ function doLogout() {
   location.reload();
 }
 
-/** Called on page load: if a token is already in this tab's sessionStorage, skip the
- * login form. sessionStorage (not localStorage) on purpose -- a demo login shouldn't
- * silently persist across browser restarts the way a real "remember me" would. */
-function restoreSessionIfPresent() {
-  if (getToken()) showGate();
+/** Called at the top of every page's script: wipes any leftover session so opening (or
+ * reloading) any page always starts at the login form, never silently reusing a token
+ * from a different tab, a different role's page, or an earlier visit. sessionStorage
+ * (not localStorage) already meant a login never survives closing the tab; this makes
+ * it not even survive opening a new page within the same tab. */
+function requireFreshLogin() {
+  clearSession();
 }

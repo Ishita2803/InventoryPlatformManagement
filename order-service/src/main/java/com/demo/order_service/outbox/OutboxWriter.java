@@ -122,11 +122,14 @@ public class OutboxWriter {
     /** Phase D8: queues the invoice notification once payment-service has computed the
      * amount -- same outbox shape as every other event this service publishes, so a crash
      * between computing the invoice and this write cannot lose the notification. */
-    public void writeInvoiceGenerated(String orderId, String customerId,
-                                       String invoiceId, java.math.BigDecimal totalAmount) {
+    public void writeInvoiceGenerated(String orderId, String customerId, String invoiceId,
+                                       String carrierCode, java.util.List<InvoiceGeneratedEvent.Line> items,
+                                       java.math.BigDecimal lineTotal, java.math.BigDecimal weightSurcharge,
+                                       java.math.BigDecimal totalAmount, String recipientEmail) {
 
         InvoiceGeneratedEvent event = new InvoiceGeneratedEvent(
-                UUID.randomUUID().toString(), orderId, customerId, invoiceId, totalAmount, Instant.now());
+                UUID.randomUUID().toString(), orderId, customerId, invoiceId, carrierCode, items,
+                lineTotal, weightSurcharge, totalAmount, Instant.now(), recipientEmail);
 
         write(event.eventId(), orderId, KafkaTopics.INVOICE_GENERATED, event);
     }

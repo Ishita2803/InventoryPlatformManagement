@@ -28,4 +28,6 @@ data:
   INVENTORY_BASE_URL: "http://inventory-service:8082"
   # Phase D8: payment-service's InvoiceService looks up a carrier's weight-tier surcharge.
   CARRIER_BASE_URL: "http://carrier-service:8088"
+  # order-service resolves a customer's email at invoice time for the invoice email.
+  CUSTOMER_BASE_URL: "http://customer-service:8087"
   SPRING_PROFILES_ACTIVE: "k8s"

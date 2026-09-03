@@ -5,27 +5,32 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 /**
- * The mock provider: writes the notification to the log instead of sending it.
+ * Writes every notification to the log, regardless of whether it was also emailed --
+ * the one thing every existing test and every prior demo has relied on being able to
+ * see in the pod logs.
  *
- * <p>Deliberately the only implementation. Wiring a real email provider would add an
- * external dependency, credentials to manage and a rate limit to respect, and would
- * demonstrate nothing about the distributed-systems problems this project is about.
+ * <p>Deliberately <em>not</em> a {@link NotificationSender} itself: only
+ * {@link CompositeNotificationSender} implements that interface, so there is exactly one
+ * bean production code (and a test's {@code @Primary} override) ever has to reason
+ * about, rather than three candidates an autowire point could resolve to.
  */
 @Component
-public class LoggingNotificationSender implements NotificationSender {
+public class LoggingNotificationSender {
 
     private static final Logger log = LoggerFactory.getLogger(LoggingNotificationSender.class);
 
-    @Override
     public void send(Notification notification) {
         log.info("""
-                
+
                 ---------- MOCK EMAIL ----------
-                To:      customer of order {}
+                To:      {}
                 Subject: {}
-                
+
                 {}
                 --------------------------------""",
-                notification.orderId(), notification.kind(), notification.body());
+                notification.recipientEmail() != null
+                        ? notification.recipientEmail()
+                        : "customer of order " + notification.orderId(),
+                notification.kind(), notification.body());
     }
 }

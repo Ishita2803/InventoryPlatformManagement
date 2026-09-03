@@ -1,5 +1,6 @@
 package com.demo.order_service.service;
 
+import com.demo.order_service.client.CustomerServiceClient;
 import com.demo.order_service.client.InventoryServiceClient;
 import com.demo.order_service.dto.CreateOrderRequest;
 import com.demo.order_service.dto.CreatePurchaseOrderRequest;
@@ -45,6 +46,7 @@ public class DirectOrderService {
     private final OrderMapper orderMapper;
     private final PaymentClient paymentClient;
     private final OutboxWriter outboxWriter;
+    private final CustomerServiceClient customerServiceClient;
 
     public static boolean isDirectOrder(CreateOrderRequest request) {
         return Boolean.TRUE.equals(request.getDirect());
@@ -125,8 +127,17 @@ public class DirectOrderService {
             return;
         }
 
+        List<com.demo.order_service.events.InvoiceGeneratedEvent.Line> invoiceLines = lines.stream()
+                .map(line -> new com.demo.order_service.events.InvoiceGeneratedEvent.Line(
+                        line.skuNumber(), line.quantity(), line.unitPrice(),
+                        line.unitPrice().multiply(BigDecimal.valueOf(line.quantity()))))
+                .toList();
+
+        String recipientEmail = customerServiceClient.getEmail(order.getCustomerId());
+
         outboxWriter.writeInvoiceGenerated(
-                order.getOrderId(), order.getCustomerId(), result.invoiceId(), result.totalAmount());
+                order.getOrderId(), order.getCustomerId(), result.invoiceId(), order.getCarrierCode(),
+                invoiceLines, result.lineTotal(), result.weightSurcharge(), result.totalAmount(), recipientEmail);
     }
 
     private void validate(CreateOrderRequest request) {

@@ -77,8 +77,7 @@
 
 <script src="common.js"></script>
 <script>
-  restoreSessionIfPresent();
-  if (getToken()) { listWeightTiers(); listAssignedOrders(); }
+  requireFreshLogin();
 
   async function login() {
     if (await doLogin('CARRIER', 'loginUser', 'loginPass', 'loginMsg')) {

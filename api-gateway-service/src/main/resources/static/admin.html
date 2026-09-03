@@ -17,7 +17,6 @@
     </div>
   </div>
   <div>
-    <nav><a href="vendor.html">Vendor</a><a href="customer.html">Store</a><a href="carrier.html">Carrier</a></nav>
     <div id="whoami" class="whoami"></div>
   </div>
 </header>
@@ -39,6 +38,7 @@
       <button class="tab-btn active" onclick="showTab('dashboard')">Dashboard</button>
       <button class="tab-btn" onclick="showTab('onboarding')">Onboarding</button>
       <button class="tab-btn" onclick="showTab('stock')">Purchase Orders</button>
+      <button class="tab-btn" onclick="showTab('directory')">Directory</button>
     </div>
 
     <div id="tab-dashboard" class="tab-panel active" style="display:grid; gap:24px;">
@@ -151,6 +151,31 @@
 
     </div>
 
+    <div id="tab-directory" class="tab-panel" style="display:none; gap:24px;">
+
+      <section>
+        <h2>Vendors <small id="vendorCount"></small></h2>
+        <div class="row"><button class="secondary" onclick="loadVendorDirectory()">Refresh</button></div>
+        <div id="vendorDirectoryMsg" class="msg"></div>
+        <div id="vendorDirectory"></div>
+      </section>
+
+      <section>
+        <h2>Customers <small id="customerCount"></small></h2>
+        <div class="row"><button class="secondary" onclick="loadCustomerDirectory()">Refresh</button></div>
+        <div id="customerDirectoryMsg" class="msg"></div>
+        <div id="customerDirectory"></div>
+      </section>
+
+      <section>
+        <h2>Carriers <small id="carrierCount"></small></h2>
+        <div class="row"><button class="secondary" onclick="loadCarrierDirectory()">Refresh</button></div>
+        <div id="carrierDirectoryMsg" class="msg"></div>
+        <div id="carrierDirectory"></div>
+      </section>
+
+    </div>
+
   </div>
 
   <details class="devlog">
@@ -162,14 +187,16 @@
 
 <script src="common.js"></script>
 <script>
-  restoreSessionIfPresent();
-  if (getToken()) { loadProfitReport(); listPurchaseOrders(); }
+  requireFreshLogin();
 
   async function login() {
     if (await doLogin('ADMIN', 'loginUser', 'loginPass', 'loginMsg')) {
       showGate();
       loadProfitReport();
       listPurchaseOrders();
+      loadVendorDirectory();
+      loadCustomerDirectory();
+      loadCarrierDirectory();
     }
   }
 
@@ -323,6 +350,132 @@
     } catch (e) {
       el.className = 'msg error'; el.textContent = 'Could not load the profit report.';
     }
+  }
+
+  // --- Directory: every vendor/customer/carrier onboarded so far, one section each. ---
+
+  async function loadVendorDirectory() {
+    const el = document.getElementById('vendorDirectoryMsg');
+    el.className = 'msg'; el.textContent = 'Loading…';
+    try {
+      const vendors = await api('GET', '/api/vendor/vendors');
+      document.getElementById('vendorCount').textContent = `(${vendors.length})`;
+      const list = document.getElementById('vendorDirectory');
+      if (!vendors.length) {
+        list.innerHTML = '<div class="empty-state">No vendors onboarded yet.</div>';
+        el.textContent = '';
+        return;
+      }
+      el.textContent = '';
+      list.innerHTML = vendors.map(v => `
+        <div class="cart-line">
+          <div>
+            <div class="name">${v.name}</div>
+            <div class="sub" style="margin:0;">Onboarded ${new Date(v.createdAt).toLocaleDateString()}</div>
+          </div>
+          <button class="secondary" onclick="toggleVendorProducts('${v.vendorId}', this)">View products</button>
+        </div>
+        <div id="vendorProducts-${cssId(v.vendorId)}" style="display:none; margin:4px 0 12px 12px;"></div>`).join('');
+    } catch (e) {
+      el.className = 'msg error'; el.textContent = 'Could not load vendors.';
+    }
+  }
+
+  async function toggleVendorProducts(vendorId, button) {
+    const container = document.getElementById('vendorProducts-' + cssId(vendorId));
+    if (container.style.display === 'block') {
+      container.style.display = 'none';
+      button.textContent = 'View products';
+      return;
+    }
+    try {
+      const allProducts = await api('GET', '/api/vendor/products');
+      const products = allProducts.filter(p => p.vendorId === vendorId);
+      container.innerHTML = products.length
+        ? `<table><thead><tr><th>Sku</th><th>Name</th><th>Cost price</th></tr></thead><tbody>${
+            products.map(p => `<tr><td><code>${p.skuNumber}</code></td><td>${p.productName}</td><td>$${Number(p.costPrice).toFixed(2)}</td></tr>`).join('')
+          }</tbody></table>`
+        : '<div class="empty-state">No products listed by this vendor yet.</div>';
+      container.style.display = 'block';
+      button.textContent = 'Hide products';
+    } catch (e) { /* dev log shows the failure */ }
+  }
+
+  async function loadCustomerDirectory() {
+    const el = document.getElementById('customerDirectoryMsg');
+    el.className = 'msg'; el.textContent = 'Loading…';
+    try {
+      const customers = await api('GET', '/api/customer/customers');
+      document.getElementById('customerCount').textContent = `(${customers.length})`;
+      const list = document.getElementById('customerDirectory');
+      if (!customers.length) {
+        list.innerHTML = '<div class="empty-state">No customers onboarded yet.</div>';
+        el.textContent = '';
+        return;
+      }
+      el.textContent = '';
+      list.innerHTML = customers.map(c => `
+        <div class="cart-line">
+          <div>
+            <div class="name">${c.name}</div>
+            <div class="sub" style="margin:0;">${c.email} &middot; ${c.customerNo}</div>
+          </div>
+          <button class="secondary" onclick="toggleCustomerAddress('${cssId(c.customerNo)}', this)">View address</button>
+        </div>
+        <div id="customerAddress-${cssId(c.customerNo)}" style="display:none; margin:4px 0 12px 12px;" class="sub">
+          Billing: ${c.defaultBillingAddress.line}, ${c.defaultBillingAddress.city} (${c.defaultBillingAddress.region})<br>
+          Shipping: ${c.defaultShippingAddress.line}, ${c.defaultShippingAddress.city} (${c.defaultShippingAddress.region})
+        </div>`).join('');
+    } catch (e) {
+      el.className = 'msg error'; el.textContent = 'Could not load customers.';
+    }
+  }
+
+  function toggleCustomerAddress(id, button) {
+    const container = document.getElementById('customerAddress-' + id);
+    const showing = container.style.display === 'block';
+    container.style.display = showing ? 'none' : 'block';
+    button.textContent = showing ? 'View address' : 'Hide address';
+  }
+
+  async function loadCarrierDirectory() {
+    const el = document.getElementById('carrierDirectoryMsg');
+    el.className = 'msg'; el.textContent = 'Loading…';
+    try {
+      const carriers = await api('GET', '/api/carrier/carriers');
+      document.getElementById('carrierCount').textContent = `(${carriers.length})`;
+      const list = document.getElementById('carrierDirectory');
+      if (!carriers.length) {
+        list.innerHTML = '<div class="empty-state">No carriers onboarded yet.</div>';
+        el.textContent = '';
+        return;
+      }
+      el.textContent = '';
+      list.innerHTML = carriers.map(c => `
+        <div class="cart-line">
+          <div>
+            <div class="name">${c.carrierName}</div>
+            <div class="sub" style="margin:0;">${c.carrierCode} &middot; ${c.weightTiers.length} rate(s)</div>
+          </div>
+          <button class="secondary" onclick="toggleCarrierRates('${cssId(c.carrierCode)}', this)">View rates</button>
+        </div>
+        <div id="carrierRates-${cssId(c.carrierCode)}" style="display:none; margin:4px 0 12px 12px;">
+          ${c.weightTiers.length
+            ? `<table><thead><tr><th>Up to</th><th>Surcharge</th></tr></thead><tbody>${
+                c.weightTiers.map(t => `<tr><td>${t.upperLimitKg} kg</td><td>$${Number(t.additionalCost).toFixed(2)}</td></tr>`).join('')
+              }</tbody></table>`
+            : '<div class="empty-state">No rates configured yet.</div>'}
+        </div>`).join('');
+    } catch (e) {
+      el.className = 'msg error'; el.textContent = 'Could not load carriers.';
+    }
+  }
+
+  function toggleCarrierRates(id, button) {
+    const container = document.getElementById('carrierRates-' + id);
+    const showing = container.style.display === 'block';
+    container.style.display = showing ? 'none' : 'block';
+    button.textContent = showing ? 'View rates' : 'Hide rates';
   }
 </script>
 
