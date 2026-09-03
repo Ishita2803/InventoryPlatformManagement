@@ -1194,6 +1194,39 @@ email was sent (as with every other notification in this project, a logged mock)
 
 ---
 
+## Phase D9 — Direct orders ✅ *(done 2026-09-03)*
+
+- [x] Resolved the open item flagged after D7: a direct order's invoice applies the
+      **same carrier weight-tier surcharge** a sales order's does, for consistency — the
+      default the plan proposed, confirmed rather than silently assumed.
+- [x] `DirectOrderService` (new) buys straight from the vendor (a `PurchaseOrder` with
+      `purpose = DIRECT`) and never calls inventory-service at all — no fulfillment
+      search, no reservation, no release-on-failure compensation, because there is
+      nothing on inventory-service's side to compensate for.
+- [x] Impulse still charges its own catalog sale price (a read-only call to
+      inventory-service's existing D5 catalog endpoint), not the vendor's cost price --
+      bypassing the warehouse changes *how* a sku reaches the customer, not what Impulse
+      decided to charge for it.
+- [x] `PurchaseOrderFulfilledEvent` gains a `purpose` field so inventory-service's
+      listener can tell a `DIRECT` purchase order (skip stocking) apart from
+      `STOCKING`/`BACKORDER` (stock it, unchanged from D6/D7).
+- [x] `Order` gains a nullable `Boolean direct` flag — deliberately not a primitive
+      `boolean`, applying trap #55's lesson (a `ddl-auto: update`-added `NOT NULL` column
+      has no way to backfill existing rows) before hitting it a second time.
+- [x] Reuses D8's exact invoicing path (same fail-open `PaymentClient.generateInvoice`,
+      same outbox/notification choreography) with zero new billing logic.
+
+**Exit:** met, verified live: a direct order's stock query showed the warehouse's
+`availableQuantity`/`reservedQuantity` completely unchanged before and after (9/55 both
+times); the auto-created `DIRECT` purchase order had `warehouseId: null` and was
+auto-fulfilled by the mock vendor; inventory-service's own log line explicitly recorded
+skipping the stock update ("is DIRECT -- skipping stock, no warehouse involved"); the
+invoice (150.00 line total + 25.00 weight surcharge = 175.00) matched a hand computation
+exactly, confirming D9 produces a correct invoice through the identical D8 mechanism a
+warehouse-fulfilled sales order uses.
+
+---
+
 ## Resume discipline
 
 Claim a capability **only after it is implemented and tested.** Interviewers ask about

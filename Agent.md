@@ -626,6 +626,38 @@ A 200 with **empty** `propertySources` means the filename doesn't match
 
 Newest first. Add an entry for every meaningful change.
 
+### 2026-09-03 — Phase D9 complete: direct orders, bypassing the warehouse entirely
+- **Resolved the open item from D7's plan**: a direct order's invoice applies the same
+  carrier weight-tier surcharge a sales order's does. Confirmed as the actual answer,
+  not left as a silent assumption.
+- **`DirectOrderService`** (new): a customer buys straight from the vendor (a
+  `PurchaseOrder` with `purpose = DIRECT`) and inventory-service is **never called at
+  all** for this flow -- no fulfillment search, no reservation, and therefore no
+  release-on-failure compensation either, since there is nothing on inventory-service's
+  side that could need compensating.
+- **Still Impulse's own sale price, not the vendor's cost price**: a direct order reads
+  inventory-service's existing D5 catalog endpoint (read-only) to price the line, the
+  same distinction D5's whole "two prices, two services" design already drew. Bypassing
+  the warehouse changes the fulfillment path, not the pricing decision.
+- **`PurchaseOrderFulfilledEvent` gains a `purpose` field** (duplicated in both services,
+  as always) so inventory-service's `PurchaseOrderFulfilledListener` can distinguish a
+  `DIRECT` purchase order (skip stock entirely, log and return) from
+  `STOCKING`/`BACKORDER` (stock it, exactly as D6/D7 already do).
+- **`Order.direct` is a nullable `Boolean`, not a primitive `boolean`** -- applying trap
+  #55's lesson (D7's own `ddl-auto: update` gap) *before* hitting it again, rather than
+  after: a `NOT NULL` boolean column added to an already-populated table via `update`
+  would have no default to backfill existing rows with.
+- **Zero new billing logic**: a direct order reuses D8's `PaymentClient.generateInvoice`
+  and the outbox → notification-service choreography exactly as a sales order does.
+- **Verified live**: placed a direct order for 2 units against a real sku and carrier;
+  confirmed the warehouse's `availableQuantity`/`reservedQuantity` were bit-for-bit
+  unchanged before and after (9/55, both times); confirmed the auto-created `DIRECT`
+  purchase order had `warehouseId: null` and was auto-fulfilled by the mock vendor;
+  confirmed inventory-service's own log line explicitly recorded skipping the stock
+  update rather than merely not logging a stock change; confirmed the invoice (150.00 +
+  25.00 weight surcharge = 175.00) matched a hand computation exactly. Full order-service
+  (77 tests) and inventory-service (46 tests) suites green.
+
 ### 2026-09-03 — Phase D8 complete: billing and invoicing for sales orders
 - **`payment-service`'s new `InvoiceService`**: `shipQuantity × salePrice` per shipped
   line, plus one weight-based carrier surcharge for the whole order. Idempotent by
