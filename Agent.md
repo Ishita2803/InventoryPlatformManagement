@@ -626,6 +626,33 @@ A 200 with **empty** `propertySources` means the filename doesn't match
 
 Newest first. Add an entry for every meaningful change.
 
+### 2026-09-03 — Phase D10 complete: role-based frontend for admin/vendor/customer/carrier
+- **Four static pages** (`admin.html`, `vendor.html`, `customer.html`, `carrier.html`),
+  served by `api-gateway-service` exactly like `demo.html` -- no build step, no framework.
+  A new shared `common.css`/`common.js` holds the styling and auth plumbing so four pages
+  don't duplicate ~150 lines of near-identical boilerplate each.
+- **Real login on every page**: `POST /auth/login`, JWT kept in `sessionStorage` (not
+  `localStorage` -- a demo credential shouldn't silently survive a browser restart the
+  way a real "remember me" would), attached as `Authorization: Bearer` on every
+  subsequent call. Logging in with the wrong role's credentials is caught client-side
+  (compares the login response's `role` against what the page expects) before any gated
+  endpoint is even attempted.
+- **admin.html**: onboard vendor/customer/carrier, place a stocking purchase order, view
+  the PO list. **vendor.html**: manage own products, view own PO history. **customer.html**:
+  place a sales order (region + carrier) or a direct order (carrier only), check any
+  order's status. **carrier.html**: manage weight tiers, view assigned orders.
+- **New backend capability**: `GET /api/orders/assigned` (order-service), scoped by
+  `carrierCode` from the caller's verified JWT -- the existing, deliberately-unscoped
+  `GET /api/orders` had no notion of "which orders are mine" for any role, and nothing
+  before now needed one. Gated `CARRIER`-only at the gateway; the pre-existing
+  `GET /api/orders` route is completely untouched and still ungated, so `demo.html`'s
+  unauthenticated "load orders" button keeps working exactly as it did before this phase.
+- **Verified live**: onboarded a fresh vendor and carrier through the real pages' own API
+  calls, logged in as each, added a product and a weight tier; placed a sales order
+  against the new carrier and confirmed it — and only it — showed up in that carrier's
+  `GET /api/orders/assigned`; confirmed 401 with no token and 403 for a non-CARRIER role
+  on that same endpoint; all four pages return `200` from the real gateway.
+
 ### 2026-09-03 — Phase D9 complete: direct orders, bypassing the warehouse entirely
 - **Resolved the open item from D7's plan**: a direct order's invoice applies the same
   carrier weight-tier surcharge a sales order's does. Confirmed as the actual answer,

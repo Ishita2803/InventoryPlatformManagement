@@ -1227,6 +1227,41 @@ warehouse-fulfilled sales order uses.
 
 ---
 
+## Phase D10 — Frontend ✅ *(done 2026-09-03)*
+
+- [x] Four static, no-build-step pages served by `api-gateway-service` (same style as
+      `demo.html`): `admin.html`, `vendor.html`, `customer.html`, `carrier.html`, sharing
+      a new `common.css`/`common.js` rather than duplicating ~150 lines of styling and
+      auth boilerplate four times.
+- [x] Each page starts with a real login (`POST /auth/login`), keeps the JWT in
+      `sessionStorage` (not `localStorage` — a demo login shouldn't silently outlive the
+      browser tab), and attaches it as `Authorization: Bearer` on every subsequent call.
+      Logging in with the wrong role's credentials is rejected client-side before any
+      gated call is attempted.
+- [x] **admin.html** — onboard vendor/customer/carrier; place a stocking purchase order;
+      view the purchase-order list.
+- [x] **vendor.html** — add/remove products; view own purchase-order history.
+- [x] **customer.html** — place a sales order (region + carrier) and a direct order
+      (carrier only, no region); check any order's status by id.
+- [x] **carrier.html** — add/remove weight tiers; view orders assigned to this carrier.
+- [x] New backend capability this needed: `GET /api/orders/assigned`, scoped by
+      `carrierCode` from the caller's verified JWT, gated `CARRIER`-only at the gateway.
+      The existing `GET /api/orders` is completely untouched and stays ungated —
+      `demo.html`'s unauthenticated "load orders" button still works exactly as before.
+- [x] **Stated limitation, not silently papered over**: a sales/direct order's
+      `customerId` is still client-supplied (the page fills it from the logged-in
+      customer's own `businessId`, but the backend doesn't cross-check it against the
+      caller's JWT) — the same "client-supplied identifier" simplification the legacy
+      demo flow has always had, not newly introduced here.
+
+**Exit:** met, verified live against the real deployed system: onboarded a fresh vendor,
+carrier, logged in as each, added a product and a weight tier respectively; placed a
+sales order and confirmed it appeared in the new carrier's `GET /api/orders/assigned`
+(and only that carrier's orders); confirmed the endpoint returns 401 with no token and
+403 for a non-CARRIER role. All four pages load (`200`) from the real gateway.
+
+---
+
 ## Resume discipline
 
 Claim a capability **only after it is implemented and tested.** Interviewers ask about
