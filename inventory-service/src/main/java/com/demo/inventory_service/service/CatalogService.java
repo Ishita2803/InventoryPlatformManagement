@@ -82,8 +82,11 @@ public class CatalogService {
     }
 
     private CatalogItemResponse toResponse(CatalogItem item) {
+        String productName = productRepository.findBySku(item.getSkuNumber())
+                .map(Product::getName)
+                .orElse(item.getSkuNumber());
         return new CatalogItemResponse(
                 item.getSkuNumber(), item.getVendorId(), item.getUnitWeight(),
-                item.getSalePrice(), item.getCreatedAt(), item.getUpdatedAt());
+                item.getSalePrice(), item.getCreatedAt(), item.getUpdatedAt(), productName);
     }
 }

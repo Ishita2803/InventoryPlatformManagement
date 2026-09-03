@@ -3,18 +3,21 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Impulse — Carrier</title>
+<title>Impulse Carrier Portal</title>
 <link rel="stylesheet" href="common.css">
 </head>
 <body>
 
 <header>
-  <div>
-    <h1>Impulse — Carrier</h1>
-    <p>Set weight-tier surcharges; see the orders assigned to you.</p>
+  <div class="brand">
+    <div class="logo">I</div>
+    <div>
+      <h1>Carrier Portal</h1>
+      <p>Set your shipping rates and see the shipments assigned to you.</p>
+    </div>
   </div>
   <div>
-    <nav><a href="admin.html">Admin</a><a href="vendor.html">Vendor</a><a href="customer.html">Customer</a></nav>
+    <nav><a href="admin.html">Admin</a><a href="vendor.html">Vendor</a><a href="customer.html">Store</a></nav>
     <div id="whoami" class="whoami"></div>
   </div>
 </header>
@@ -22,44 +25,53 @@
 <main>
 
   <section id="loginPanel" class="login-panel">
-    <h2>Sign in <small>CARRIER</small></h2>
+    <h2>Sign in</h2>
     <div class="row">
       <div class="field"><label>Username</label><input id="loginUser" value="carrier-demo"></div>
       <div class="field"><label>Password</label><input id="loginPass" type="password" value="carrier-demo-pass"></div>
       <button onclick="login()">Sign in</button>
     </div>
     <div id="loginMsg" class="msg"></div>
-    <p class="sub">An admin onboards carriers from <a href="admin.html">admin.html</a>; sign in with the credentials given at onboarding time.</p>
+    <p class="sub">An admin sets up carrier accounts from <a href="admin.html">admin.html</a>.</p>
   </section>
 
-  <section class="gate">
-    <h2>Add a weight tier</h2>
-    <p class="sub">The first tier (ascending by upper limit) an order's total weight does not exceed is the surcharge charged for it.</p>
-    <div class="row">
-      <div class="field"><label>Upper limit (kg)</label><input id="tierLimit" value="5.000"></div>
-      <div class="field"><label>Additional cost</label><input id="tierCost" value="25.00"></div>
-      <button onclick="addWeightTier()">Add tier</button>
-      <button class="secondary" onclick="listWeightTiers()">Refresh</button>
-    </div>
-    <div id="tierMsg" class="msg"></div>
-    <table id="tierTable" style="display:none;">
-      <thead><tr><th>Tier ID</th><th>Upper limit (kg)</th><th>Additional cost</th><th></th></tr></thead>
-      <tbody id="tierTableBody"></tbody>
-    </table>
-  </section>
+  <div class="gate" style="display:grid; gap:24px;">
 
-  <section class="gate">
-    <h2>Orders assigned to you</h2>
-    <div class="row"><button class="secondary" onclick="listAssignedOrders()">Refresh</button></div>
-    <table id="orderTable" style="display:none;">
-      <thead><tr><th>Order ID</th><th>Customer</th><th>Status</th><th>Total</th><th>Weight</th><th>Region</th></tr></thead>
-      <tbody id="orderTableBody"></tbody>
-    </table>
-    <div id="orderMsg" class="msg"></div>
-  </section>
+    <section>
+      <h2>Overview</h2>
+      <div class="stat-grid">
+        <div class="stat-card"><div class="label">Weight tiers configured</div><div class="value" id="statTierCount">—</div></div>
+        <div class="stat-card"><div class="label">Shipments assigned</div><div class="value accent" id="statShipmentCount">—</div></div>
+      </div>
+    </section>
 
-  <div class="log-title">Last request / response</div>
-  <pre id="log">Nothing sent yet.</pre>
+    <section>
+      <h2>Shipping rates <small>by weight tier</small></h2>
+      <p class="sub">The first tier (ascending by upper limit) an order's total weight fits under is the surcharge applied.</p>
+      <div class="row">
+        <div class="field"><label>Upper limit (kg)</label><input id="tierLimit" value="5.000"></div>
+        <div class="field"><label>Surcharge</label><input id="tierCost" value="25.00"></div>
+        <button onclick="addWeightTier()">Add rate</button>
+      </div>
+      <div id="tierMsg" class="msg"></div>
+      <table id="tierTable" style="display:none;">
+        <thead><tr><th>Up to</th><th>Surcharge</th><th></th></tr></thead>
+        <tbody id="tierTableBody"></tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>Shipments assigned to you</h2>
+      <div id="orderMsg" class="msg"></div>
+      <div id="orderList"></div>
+    </section>
+
+  </div>
+
+  <details class="devlog">
+    <summary>Developer log (raw API requests/responses)</summary>
+    <pre id="log">Nothing sent yet.</pre>
+  </details>
 
 </main>
 
@@ -84,10 +96,10 @@
         upperLimitKg: Number(document.getElementById('tierLimit').value),
         additionalCost: Number(document.getElementById('tierCost').value)
       });
-      el.className = 'msg ok'; el.textContent = 'Tier added.';
+      el.className = 'msg ok'; el.textContent = 'Rate added.';
       listWeightTiers();
     } catch (e) {
-      el.className = 'msg error'; el.textContent = 'Failed: ' + (e.body && (e.body.message || JSON.stringify(e.body.fieldErrors)) || e.status);
+      el.className = 'msg error'; el.textContent = 'Could not add that rate: ' + (e.body && (e.body.message || JSON.stringify(e.body.fieldErrors)) || e.status);
     }
   }
 
@@ -95,47 +107,51 @@
     try {
       await api('DELETE', `/api/carrier/weight-restrictions/${tierId}`);
       listWeightTiers();
-    } catch (e) { /* log panel shows the failure */ }
+    } catch (e) { /* dev log shows the failure */ }
   }
 
   async function listWeightTiers() {
     try {
       const tiers = await api('GET', '/api/carrier/weight-restrictions');
+      document.getElementById('statTierCount').textContent = tiers.length;
       const table = document.getElementById('tierTable');
       const tbody = document.getElementById('tierTableBody');
       tbody.innerHTML = tiers.map(t => `
         <tr>
-          <td>${t.id}</td>
-          <td>${t.upperLimitKg}</td>
-          <td>${t.additionalCost}</td>
+          <td>${t.upperLimitKg} kg</td>
+          <td>$${Number(t.additionalCost).toFixed(2)}</td>
           <td><button class="danger" onclick="removeWeightTier(${t.id})">Remove</button></td>
         </tr>`).join('');
       table.style.display = tiers.length ? 'table' : 'none';
-    } catch (e) { /* ignore -- log panel already shows the failure */ }
+    } catch (e) { /* dev log shows the failure */ }
   }
 
   async function listAssignedOrders() {
     const el = document.getElementById('orderMsg');
     try {
       const orders = await api('GET', '/api/orders/assigned');
-      const table = document.getElementById('orderTable');
-      const tbody = document.getElementById('orderTableBody');
-      tbody.innerHTML = orders.map(o => {
+      document.getElementById('statShipmentCount').textContent = orders.length;
+      const list = document.getElementById('orderList');
+      if (!orders.length) {
+        list.innerHTML = '';
+        el.className = 'msg'; el.textContent = 'No shipments assigned to you yet.';
+        return;
+      }
+      el.textContent = '';
+      list.innerHTML = orders.map(o => {
         const weight = o.items.reduce((s, i) => s + (i.unitWeight ? i.unitWeight * i.quantity : 0), 0);
+        const destination = o.deliveryRegion || (o.direct ? 'Direct from vendor' : '—');
         return `
-        <tr>
-          <td><code>${o.orderId.slice(0, 8)}…</code></td>
-          <td>${o.customerId}</td>
-          <td><span class="badge ${o.status}">${o.status}</span></td>
-          <td>${o.totalAmount}</td>
-          <td>${weight.toFixed(3)} kg</td>
-          <td>${o.deliveryRegion || (o.direct ? 'direct' : '—')}</td>
-        </tr>`;
+        <div class="cart-line">
+          <div>
+            <div class="name">Order ${o.orderId.slice(0, 8)}… &middot; ${o.customerId}</div>
+            <div class="sub" style="margin:0;">${destination} &middot; ${weight.toFixed(2)} kg</div>
+          </div>
+          <div><span class="badge ${o.status}">${o.status.replace('_', ' ')}</span> $${Number(o.totalAmount).toFixed(2)}</div>
+        </div>`;
       }).join('');
-      table.style.display = orders.length ? 'table' : 'none';
-      el.className = 'msg'; el.textContent = orders.length ? '' : 'No orders assigned to you yet.';
     } catch (e) {
-      el.className = 'msg error'; el.textContent = 'Failed: ' + (e.body && e.body.message || e.status);
+      el.className = 'msg error'; el.textContent = 'Could not load your shipments.';
     }
   }
 </script>

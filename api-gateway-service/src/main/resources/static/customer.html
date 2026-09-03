@@ -3,15 +3,18 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Impulse — Customer</title>
+<title>Impulse Store</title>
 <link rel="stylesheet" href="common.css">
 </head>
 <body>
 
 <header>
-  <div>
-    <h1>Impulse — Customer</h1>
-    <p>Place sales orders (warehouse-fulfilled) and direct orders (straight from the vendor).</p>
+  <div class="brand">
+    <div class="logo">I</div>
+    <div>
+      <h1>Impulse Store</h1>
+      <p>Browse the catalog, add to cart, and check out.</p>
+    </div>
   </div>
   <div>
     <nav><a href="admin.html">Admin</a><a href="vendor.html">Vendor</a><a href="carrier.html">Carrier</a></nav>
@@ -22,119 +25,266 @@
 <main>
 
   <section id="loginPanel" class="login-panel">
-    <h2>Sign in <small>CUSTOMER</small></h2>
+    <h2>Sign in</h2>
     <div class="row">
       <div class="field"><label>Username</label><input id="loginUser" value="customer-demo"></div>
       <div class="field"><label>Password</label><input id="loginPass" type="password" value="customer-demo-pass"></div>
       <button onclick="login()">Sign in</button>
     </div>
     <div id="loginMsg" class="msg"></div>
-    <p class="sub">An admin onboards customers from <a href="admin.html">admin.html</a>; sign in with the credentials given at onboarding time.</p>
+    <p class="sub">New here? An admin sets up customer accounts from <a href="admin.html">admin.html</a>.</p>
   </section>
 
-  <section class="gate">
-    <h2>Place a sales order <small>fulfilled from a warehouse, region-matched</small></h2>
-    <p class="sub">Never rejected: ships whatever stock is available and auto-backorders any shortfall.</p>
-    <div class="row">
-      <div class="field"><label>Sku number</label><input id="soSku" value="ACME-WIDGET-A"></div>
-      <div class="field"><label>Quantity</label><input id="soQty" value="2" type="number"></div>
-      <div class="field"><label>Delivery region</label><input id="soRegion" value="MUMBAI"></div>
-      <div class="field"><label>Carrier code</label><input id="soCarrier" value="DTDC"></div>
-      <button onclick="placeSalesOrder()">Place sales order</button>
+  <div class="gate">
+    <div class="tabs">
+      <button class="tab-btn active" onclick="showTab('shop')">Shop</button>
+      <button class="tab-btn" onclick="showTab('orders')">My Orders</button>
     </div>
-    <div id="soMsg" class="msg"></div>
-  </section>
 
-  <section class="gate">
-    <h2>Place a direct order <small>ships straight from the vendor, no warehouse</small></h2>
-    <div class="row">
-      <div class="field"><label>Sku number</label><input id="doSku" value="ACME-WIDGET-A"></div>
-      <div class="field"><label>Quantity</label><input id="doQty" value="2" type="number"></div>
-      <div class="field"><label>Carrier code</label><input id="doCarrier" value="DTDC"></div>
-      <button onclick="placeDirectOrder()">Place direct order</button>
+    <div id="tab-shop" class="tab-panel active" style="display:grid; gap:24px;">
+
+      <section>
+        <h2>Catalog</h2>
+        <p class="sub">Pick a quantity and add items to your cart.</p>
+        <div id="catalogMsg" class="msg"></div>
+        <div id="catalogGrid" class="product-grid"></div>
+      </section>
+
+      <section>
+        <h2>Your cart</h2>
+        <div id="cartLines" class="cart-panel"></div>
+        <div class="cart-total"><span>Total</span><span id="cartTotal">$0.00</span></div>
+
+        <div class="row" style="margin-top:16px;">
+          <div class="field">
+            <label>Delivery method</label>
+            <select id="deliveryMethod" onchange="onDeliveryMethodChange()">
+              <option value="standard">Standard delivery (from a warehouse)</option>
+              <option value="direct">Direct from vendor (no warehouse)</option>
+            </select>
+          </div>
+          <div class="field" id="regionField">
+            <label>Delivery region</label>
+            <select id="regionSelect"></select>
+          </div>
+          <div class="field">
+            <label>Shipping method</label>
+            <select id="carrierSelect"></select>
+          </div>
+          <button onclick="checkout()">Place order</button>
+        </div>
+        <div id="checkoutMsg" class="msg"></div>
+      </section>
+
     </div>
-    <div id="doMsg" class="msg"></div>
-  </section>
 
-  <section class="gate">
-    <h2>Check an order's status</h2>
-    <div class="row">
-      <div class="field" style="width:340px;"><label>Order ID</label><input id="lookupOrderId" style="width:100%" placeholder="paste an orderId from above"></div>
-      <button class="secondary" onclick="lookupOrder()">Check status</button>
+    <div id="tab-orders" class="tab-panel" style="display:none; gap:24px;">
+      <section>
+        <h2>Orders placed this session</h2>
+        <p class="sub">Sessions don't persist a full order history yet -- this list is what you've placed since signing in. Paste any order id below to check its live status.</p>
+        <div id="myOrders"></div>
+      </section>
+
+      <section>
+        <h2>Check an order's status</h2>
+        <div class="row">
+          <div class="field" style="width:340px;"><label>Order ID</label><input id="lookupOrderId" style="width:100%" placeholder="paste an orderId"></div>
+          <button class="secondary" onclick="lookupOrder()">Check status</button>
+        </div>
+        <div id="lookupMsg" class="msg"></div>
+        <div id="lookupResult"></div>
+      </section>
     </div>
-    <div id="lookupMsg" class="msg"></div>
-    <pre id="lookupResult" style="margin-top:10px; display:none;"></pre>
-  </section>
 
-  <div class="log-title">Last request / response</div>
-  <pre id="log">Nothing sent yet.</pre>
+  </div>
+
+  <details class="devlog">
+    <summary>Developer log (raw API requests/responses)</summary>
+    <pre id="log">Nothing sent yet.</pre>
+  </details>
 
 </main>
 
 <script src="common.js"></script>
 <script>
   restoreSessionIfPresent();
+  let catalog = [];
+  let cart = {}; // skuNumber -> { item, quantity }
+  let myOrders = [];
+  if (getToken()) { loadCatalog(); loadRegions(); loadCarriers(); renderCart(); renderMyOrders(); }
 
   async function login() {
-    if (await doLogin('CUSTOMER', 'loginUser', 'loginPass', 'loginMsg')) showGate();
+    if (await doLogin('CUSTOMER', 'loginUser', 'loginPass', 'loginMsg')) {
+      showGate();
+      loadCatalog();
+      loadRegions();
+      loadCarriers();
+      renderCart();
+      renderMyOrders();
+    }
   }
 
-  async function placeSalesOrder() {
-    const el = document.getElementById('soMsg');
-    el.className = 'msg'; el.textContent = 'Placing…';
+  function showTab(name) {
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.tab-panel').forEach(p => { p.classList.remove('active'); p.style.display = 'none'; });
+    document.querySelector(`.tab-btn[onclick="showTab('${name}')"]`).classList.add('active');
+    const panel = document.getElementById('tab-' + name);
+    panel.classList.add('active');
+    panel.style.display = 'grid';
+  }
+
+  async function loadCatalog() {
+    const el = document.getElementById('catalogMsg');
     try {
-      const order = await api('POST', '/api/orders', {
-        customerId: getBusinessId(),
-        deliveryRegion: document.getElementById('soRegion').value,
-        carrierCode: document.getElementById('soCarrier').value,
-        items: [{
-          skuNumber: document.getElementById('soSku').value,
-          quantity: Number(document.getElementById('soQty').value)
-        }]
-      });
-      const shipped = order.items.filter(i => i.warehouseId).reduce((s, i) => s + i.quantity, 0);
-      const backordered = order.items.filter(i => !i.warehouseId).reduce((s, i) => s + i.quantity, 0);
+      catalog = await api('GET', '/api/inventory/catalog');
+      const grid = document.getElementById('catalogGrid');
+      if (!catalog.length) {
+        grid.innerHTML = '';
+        el.className = 'msg'; el.textContent = 'No products for sale yet -- ask a vendor to list one and admin to price it.';
+        return;
+      }
+      el.textContent = '';
+      grid.innerHTML = catalog.map(item => `
+        <div class="product-card">
+          <div class="thumb">📦</div>
+          <div class="name">${item.productName}</div>
+          <div class="sku">${item.skuNumber}</div>
+          <div class="price">$${Number(item.salePrice).toFixed(2)}</div>
+          <div class="weight">${item.unitWeight} kg / unit</div>
+          <div class="add-row">
+            <input type="number" min="1" value="1" id="qty-${cssId(item.skuNumber)}">
+            <button onclick="addToCart('${item.skuNumber}')">Add to cart</button>
+          </div>
+        </div>`).join('');
+    } catch (e) {
+      el.className = 'msg error'; el.textContent = 'Could not load the catalog.';
+    }
+  }
+
+  function cssId(sku) { return sku.replace(/[^a-zA-Z0-9]/g, '_'); }
+
+  function addToCart(sku) {
+    const item = catalog.find(c => c.skuNumber === sku);
+    const qty = Math.max(1, Number(document.getElementById('qty-' + cssId(sku)).value) || 1);
+    if (cart[sku]) { cart[sku].quantity += qty; } else { cart[sku] = { item, quantity: qty }; }
+    renderCart();
+  }
+
+  function removeFromCart(sku) {
+    delete cart[sku];
+    renderCart();
+  }
+
+  function renderCart() {
+    const lines = document.getElementById('cartLines');
+    const entries = Object.values(cart);
+    if (!entries.length) {
+      lines.innerHTML = '<div class="cart-empty">Your cart is empty.</div>';
+    } else {
+      lines.innerHTML = entries.map(({ item, quantity }) => `
+        <div class="cart-line">
+          <div><div class="name">${item.productName}</div><div class="sku">${item.skuNumber}</div></div>
+          <div><span class="qty">x${quantity}</span>$${(item.salePrice * quantity).toFixed(2)}
+            <button class="danger" style="margin-left:8px;" onclick="removeFromCart('${item.skuNumber}')">Remove</button>
+          </div>
+        </div>`).join('');
+    }
+    const total = entries.reduce((s, { item, quantity }) => s + item.salePrice * quantity, 0);
+    document.getElementById('cartTotal').textContent = '$' + total.toFixed(2);
+  }
+
+  function onDeliveryMethodChange() {
+    const direct = document.getElementById('deliveryMethod').value === 'direct';
+    document.getElementById('regionField').style.display = direct ? 'none' : 'flex';
+  }
+
+  async function loadRegions() {
+    try {
+      const warehouses = await api('GET', '/api/inventory/warehouses');
+      const regions = [...new Set(warehouses.map(w => w.region))];
+      document.getElementById('regionSelect').innerHTML = regions.map(r => `<option value="${r}">${r}</option>`).join('')
+        || '<option value="">No warehouses registered yet</option>';
+    } catch (e) { /* dev log shows the failure */ }
+  }
+
+  async function loadCarriers() {
+    try {
+      const carriers = await api('GET', '/api/carrier/carriers');
+      document.getElementById('carrierSelect').innerHTML = carriers.map(c =>
+        `<option value="${c.carrierCode}">${c.carrierName}</option>`).join('')
+        || '<option value="">No carriers onboarded yet</option>';
+    } catch (e) { /* dev log shows the failure */ }
+  }
+
+  async function checkout() {
+    const el = document.getElementById('checkoutMsg');
+    const entries = Object.values(cart);
+    if (!entries.length) { el.className = 'msg error'; el.textContent = 'Your cart is empty.'; return; }
+
+    const direct = document.getElementById('deliveryMethod').value === 'direct';
+    const carrierCode = document.getElementById('carrierSelect').value;
+
+    const body = {
+      customerId: getBusinessId(),
+      carrierCode,
+      direct: direct || undefined,
+      deliveryRegion: direct ? undefined : document.getElementById('regionSelect').value,
+      items: entries.map(({ item, quantity }) => ({ skuNumber: item.skuNumber, quantity }))
+    };
+
+    el.className = 'msg'; el.textContent = 'Placing order…';
+    try {
+      const order = await api('POST', '/api/orders', body);
+      const shipped = order.items.filter(i => i.warehouseId || order.direct).reduce((s, i) => s + i.quantity, 0);
+      const backordered = order.items.filter(i => !i.warehouseId && !order.direct).reduce((s, i) => s + i.quantity, 0);
+
       el.className = 'msg ok';
-      el.textContent = `Order ${order.orderId} — shipped ${shipped}, backordered ${backordered}, total ${order.totalAmount}`;
+      el.textContent = backordered
+        ? `Order placed! ${shipped} unit(s) shipping now, ${backordered} backordered. Total: $${Number(order.totalAmount).toFixed(2)}`
+        : `Order placed! Total: $${Number(order.totalAmount).toFixed(2)}`;
+
+      cart = {};
+      renderCart();
+
+      myOrders.unshift(order);
+      renderMyOrders();
       document.getElementById('lookupOrderId').value = order.orderId;
     } catch (e) {
-      el.className = 'msg error'; el.textContent = 'Failed: ' + (e.body && (e.body.message || JSON.stringify(e.body.fieldErrors)) || e.status);
+      el.className = 'msg error'; el.textContent = 'Could not place the order: ' + (e.body && e.body.message || e.status);
     }
   }
 
-  async function placeDirectOrder() {
-    const el = document.getElementById('doMsg');
-    el.className = 'msg'; el.textContent = 'Placing…';
-    try {
-      const order = await api('POST', '/api/orders', {
-        customerId: getBusinessId(),
-        carrierCode: document.getElementById('doCarrier').value,
-        direct: true,
-        items: [{
-          skuNumber: document.getElementById('doSku').value,
-          quantity: Number(document.getElementById('doQty').value)
-        }]
-      });
-      el.className = 'msg ok'; el.textContent = `Direct order ${order.orderId} placed — total ${order.totalAmount}`;
-      document.getElementById('lookupOrderId').value = order.orderId;
-    } catch (e) {
-      el.className = 'msg error'; el.textContent = 'Failed: ' + (e.body && (e.body.message || JSON.stringify(e.body.fieldErrors)) || e.status);
-    }
+  function renderMyOrders() {
+    const el = document.getElementById('myOrders');
+    if (!myOrders.length) { el.innerHTML = '<div class="empty-state">No orders placed yet this session.</div>'; return; }
+    el.innerHTML = myOrders.map(o => `
+      <div class="cart-line">
+        <div>
+          <div class="name">Order ${o.orderId.slice(0, 8)}…</div>
+          <div class="sub" style="margin:0;">${o.items.length} item(s) &middot; ${o.direct ? 'Direct from vendor' : 'Standard delivery'}</div>
+        </div>
+        <div><span class="badge ${o.status}">${o.status.replace('_', ' ')}</span> $${Number(o.totalAmount).toFixed(2)}</div>
+      </div>`).join('');
   }
 
   async function lookupOrder() {
     const el = document.getElementById('lookupMsg');
     const out = document.getElementById('lookupResult');
     const orderId = document.getElementById('lookupOrderId').value.trim();
-    if (!orderId) { el.className = 'msg error'; el.textContent = 'Enter an order ID first.'; out.style.display = 'none'; return; }
+    if (!orderId) { el.className = 'msg error'; el.textContent = 'Enter an order ID first.'; out.innerHTML = ''; return; }
     el.className = 'msg'; el.textContent = 'Looking up…';
     try {
       const order = await api('GET', `/api/orders/${orderId}`);
-      el.className = 'msg ok'; el.textContent = `Status: ${order.status}`;
-      out.style.display = 'block'; out.textContent = JSON.stringify(order, null, 2);
+      el.className = 'msg ok'; el.textContent = '';
+      out.innerHTML = `
+        <div class="stat-grid">
+          <div class="stat-card"><div class="label">Status</div><div class="value"><span class="badge ${order.status}">${order.status.replace('_', ' ')}</span></div></div>
+          <div class="stat-card"><div class="label">Total</div><div class="value accent">$${Number(order.totalAmount).toFixed(2)}</div></div>
+          <div class="stat-card"><div class="label">Items</div><div class="value">${order.items.length}</div></div>
+        </div>`;
     } catch (e) {
-      el.className = 'msg error'; el.textContent = 'Failed: ' + (e.body && e.body.message || e.status);
-      out.style.display = 'none';
+      el.className = 'msg error'; el.textContent = 'Order not found.';
+      out.innerHTML = '';
     }
   }
 </script>

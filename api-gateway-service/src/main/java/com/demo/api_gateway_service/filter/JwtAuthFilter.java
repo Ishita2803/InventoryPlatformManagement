@@ -89,9 +89,12 @@ public class JwtAuthFilter extends OncePerRequestFilter {
         ROUTE_ROLES.put("DELETE /api/customer/end-users/**", Set.of("CUSTOMER"));
 
         ROUTE_ROLES.put("POST /api/carrier/onboard", Set.of("ADMIN"));
-        ROUTE_ROLES.put("GET /api/carrier/carriers", Set.of("ADMIN"));
-        // Any authenticated role may look up one carrier's own details/tiers -- a
-        // customer needs to see a carrier's weight tiers to choose one at order time.
+        // Any authenticated role may browse the carrier directory and look up one
+        // carrier's own details/tiers -- a customer needs both to pick a carrier and see
+        // its weight tiers at checkout (the storefront's shipping-method selector).
+        // Broadened from ADMIN-only once the storefront needed it; carrier name/code and
+        // published tiers were never sensitive data the way a vendor's cost price is.
+        ROUTE_ROLES.put("GET /api/carrier/carriers", Set.of());
         ROUTE_ROLES.put("GET /api/carrier/carriers/**", Set.of());
         ROUTE_ROLES.put("POST /api/carrier/weight-restrictions/**", Set.of("CARRIER"));
         ROUTE_ROLES.put("GET /api/carrier/weight-restrictions/**", Set.of("CARRIER"));

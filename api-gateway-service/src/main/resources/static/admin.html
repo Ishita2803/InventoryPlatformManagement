@@ -3,18 +3,21 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Impulse — Admin</title>
+<title>Impulse Admin Console</title>
 <link rel="stylesheet" href="common.css">
 </head>
 <body>
 
 <header>
-  <div>
-    <h1>Impulse — Admin</h1>
-    <p>Onboard vendors, customers and carriers; place stocking purchase orders.</p>
+  <div class="brand">
+    <div class="logo">I</div>
+    <div>
+      <h1>Admin Console</h1>
+      <p>Onboard partners, stock the business, and track performance.</p>
+    </div>
   </div>
   <div>
-    <nav><a href="demo.html">Order/inventory demo</a><a href="vendor.html">Vendor</a><a href="customer.html">Customer</a><a href="carrier.html">Carrier</a></nav>
+    <nav><a href="vendor.html">Vendor</a><a href="customer.html">Store</a><a href="carrier.html">Carrier</a></nav>
     <div id="whoami" class="whoami"></div>
   </div>
 </header>
@@ -22,7 +25,7 @@
 <main>
 
   <section id="loginPanel" class="login-panel">
-    <h2>Sign in <small>ADMIN</small></h2>
+    <h2>Sign in</h2>
     <div class="row">
       <div class="field"><label>Username</label><input id="loginUser" value="admin"></div>
       <div class="field"><label>Password</label><input id="loginPass" type="password" value="admin-demo-pass"></div>
@@ -31,94 +34,152 @@
     <div id="loginMsg" class="msg"></div>
   </section>
 
-  <section class="gate">
-    <h2>Onboard a vendor</h2>
-    <div class="row">
-      <div class="field"><label>Name</label><input id="vName" value="Acme Supplies"></div>
-      <div class="field"><label>Username</label><input id="vUser" value="acme-vendor"></div>
-      <div class="field"><label>Password</label><input id="vPass" value="vendorpass1"></div>
-      <button onclick="onboardVendor()">Onboard vendor</button>
+  <div class="gate">
+    <div class="tabs">
+      <button class="tab-btn active" onclick="showTab('dashboard')">Dashboard</button>
+      <button class="tab-btn" onclick="showTab('onboarding')">Onboarding</button>
+      <button class="tab-btn" onclick="showTab('stock')">Purchase Orders</button>
     </div>
-    <div id="vMsg" class="msg"></div>
-  </section>
 
-  <section class="gate">
-    <h2>Onboard a customer</h2>
-    <div class="row">
-      <div class="field"><label>Name</label><input id="cName" value="Vijay Sales"></div>
-      <div class="field"><label>Email</label><input id="cEmail" value="vijay@example.com"></div>
-      <div class="field"><label>Username</label><input id="cUser" value="vijay-customer"></div>
-      <div class="field"><label>Password</label><input id="cPass" value="customerpass1"></div>
-    </div>
-    <div class="row">
-      <div class="field"><label>Billing line</label><input id="cBillLine" value="1 MG Road"></div>
-      <div class="field"><label>Billing city</label><input id="cBillCity" value="Mumbai"></div>
-      <div class="field"><label>Billing region</label><input id="cBillRegion" value="MUMBAI"></div>
-    </div>
-    <div class="row">
-      <div class="field"><label>Shipping line</label><input id="cShipLine" value="1 MG Road"></div>
-      <div class="field"><label>Shipping city</label><input id="cShipCity" value="Mumbai"></div>
-      <div class="field"><label>Shipping region</label><input id="cShipRegion" value="MUMBAI"></div>
-      <button onclick="onboardCustomer()">Onboard customer</button>
-    </div>
-    <div id="cMsg" class="msg"></div>
-  </section>
+    <div id="tab-dashboard" class="tab-panel active" style="display:grid; gap:24px;">
 
-  <section class="gate">
-    <h2>Onboard a carrier</h2>
-    <div class="row">
-      <div class="field"><label>Carrier code</label><input id="carCode" value="DTDC"></div>
-      <div class="field"><label>Carrier name</label><input id="carName" value="DTDC Express"></div>
-      <div class="field"><label>Username</label><input id="carUser" value="dtdc-carrier"></div>
-      <div class="field"><label>Password</label><input id="carPass" value="carrierpass1"></div>
-      <button onclick="onboardCarrier()">Onboard carrier</button>
+      <section>
+        <h2>Profit <small>today's prices &times; all-time quantity sold</small></h2>
+        <div class="row"><button class="secondary" onclick="loadProfitReport()">Refresh</button></div>
+        <div class="stat-grid" style="margin-bottom:16px;">
+          <div class="stat-card"><div class="label">Total profit</div><div class="value ok" id="profitTotal">—</div></div>
+          <div class="stat-card"><div class="label">Skus sold</div><div class="value" id="profitSkuCount">—</div></div>
+        </div>
+        <div id="profitMsg" class="msg"></div>
+        <table id="profitTable" style="display:none;">
+          <thead><tr><th>Sku</th><th>Qty sold</th><th>Sale price</th><th>Cost price</th><th>Profit/unit</th><th>Total profit</th></tr></thead>
+          <tbody id="profitTableBody"></tbody>
+        </table>
+      </section>
+
     </div>
-    <div id="carMsg" class="msg"></div>
-  </section>
 
-  <section class="gate">
-    <h2>Place a stocking purchase order <small>admin only, purpose=STOCKING</small></h2>
-    <div class="row">
-      <div class="field"><label>Sku number</label><input id="poSku" value="ACME-WIDGET-A"></div>
-      <div class="field"><label>Quantity</label><input id="poQty" value="20" type="number"></div>
-      <div class="field"><label>Warehouse ID</label><input id="poWarehouse" value="WH-MUMBAI"></div>
-      <button onclick="placePurchaseOrder()">Place purchase order</button>
-      <button class="secondary" onclick="listPurchaseOrders()">Refresh list</button>
+    <div id="tab-onboarding" class="tab-panel" style="display:none; gap:24px;">
+
+      <section>
+        <h2>Onboard a vendor</h2>
+        <div class="row">
+          <div class="field"><label>Name</label><input id="vName" value="Acme Supplies"></div>
+          <div class="field"><label>Username</label><input id="vUser" value="acme-vendor"></div>
+          <div class="field"><label>Password</label><input id="vPass" value="vendorpass1"></div>
+          <button onclick="onboardVendor()">Onboard vendor</button>
+        </div>
+        <div id="vMsg" class="msg"></div>
+      </section>
+
+      <section>
+        <h2>Onboard a customer</h2>
+        <div class="row">
+          <div class="field"><label>Name</label><input id="cName" value="Vijay Sales"></div>
+          <div class="field"><label>Email</label><input id="cEmail" value="vijay@example.com"></div>
+          <div class="field"><label>Username</label><input id="cUser" value="vijay-customer"></div>
+          <div class="field"><label>Password</label><input id="cPass" value="customerpass1"></div>
+        </div>
+        <div class="row">
+          <div class="field"><label>Billing line</label><input id="cBillLine" value="1 MG Road"></div>
+          <div class="field"><label>Billing city</label><input id="cBillCity" value="Mumbai"></div>
+          <div class="field"><label>Billing region</label><input id="cBillRegion" value="MUMBAI"></div>
+        </div>
+        <div class="row">
+          <div class="field"><label>Shipping line</label><input id="cShipLine" value="1 MG Road"></div>
+          <div class="field"><label>Shipping city</label><input id="cShipCity" value="Mumbai"></div>
+          <div class="field"><label>Shipping region</label><input id="cShipRegion" value="MUMBAI"></div>
+          <button onclick="onboardCustomer()">Onboard customer</button>
+        </div>
+        <div id="cMsg" class="msg"></div>
+      </section>
+
+      <section>
+        <h2>Onboard a carrier</h2>
+        <div class="row">
+          <div class="field"><label>Carrier code</label><input id="carCode" value="DTDC"></div>
+          <div class="field"><label>Carrier name</label><input id="carName" value="DTDC Express"></div>
+          <div class="field"><label>Username</label><input id="carUser" value="dtdc-carrier"></div>
+          <div class="field"><label>Password</label><input id="carPass" value="carrierpass1"></div>
+          <button onclick="onboardCarrier()">Onboard carrier</button>
+        </div>
+        <div id="carMsg" class="msg"></div>
+      </section>
+
+      <section>
+        <h2>Register a warehouse</h2>
+        <div class="row">
+          <div class="field"><label>Warehouse ID</label><input id="whId" value="WH-PUNE"></div>
+          <div class="field"><label>Location</label><input id="whLocation" value="Pune Logistics Park"></div>
+          <div class="field"><label>Region</label><input id="whRegion" value="PUNE"></div>
+          <button onclick="registerWarehouse()">Register warehouse</button>
+        </div>
+        <div id="whMsg" class="msg"></div>
+      </section>
+
     </div>
-    <div id="poMsg" class="msg"></div>
-    <table id="poTable" style="display:none;">
-      <thead><tr><th>PO ID</th><th>Vendor</th><th>Sku</th><th>Qty</th><th>Warehouse</th><th>Purpose</th><th>Status</th></tr></thead>
-      <tbody id="poTableBody"></tbody>
-    </table>
-  </section>
 
-  <section class="gate">
-    <h2>Profit report <small>Σ (salePrice − costPrice) × quantity sold</small></h2>
-    <p class="sub">Today's catalog prices against all-time quantity sold -- not a true historical margin, since a re-priced sku changes what this reports for units sold before the re-price.</p>
-    <div class="row"><button class="secondary" onclick="loadProfitReport()">Load report</button></div>
-    <div id="profitMsg" class="msg"></div>
-    <table id="profitTable" style="display:none;">
-      <thead><tr><th>Sku</th><th>Qty sold</th><th>Sale price</th><th>Cost price</th><th>Profit/unit</th><th>Total profit</th></tr></thead>
-      <tbody id="profitTableBody"></tbody>
-    </table>
-    <div id="profitTotal" class="msg" style="font-weight:600;"></div>
-  </section>
+    <div id="tab-stock" class="tab-panel" style="display:none; gap:24px;">
 
-  <div class="log-title">Last request / response</div>
-  <pre id="log">Nothing sent yet.</pre>
+      <section>
+        <h2>Price a sku for sale</h2>
+        <p class="sub">Fetches the vendor's real weight automatically; the store only shows priced skus.</p>
+        <div class="row">
+          <div class="field"><label>Sku number</label><input id="priceSku" value="ACME-WIDGET-A"></div>
+          <div class="field"><label>Sale price</label><input id="priceAmount" value="75.00"></div>
+          <button onclick="setSalePrice()">Set sale price</button>
+        </div>
+        <div id="priceMsg" class="msg"></div>
+      </section>
+
+      <section>
+        <h2>Place a stocking order <small>restock a warehouse from the vendor</small></h2>
+        <div class="row">
+          <div class="field"><label>Sku number</label><input id="poSku" value="ACME-WIDGET-A"></div>
+          <div class="field"><label>Quantity</label><input id="poQty" value="20" type="number"></div>
+          <div class="field"><label>Warehouse ID</label><input id="poWarehouse" value="WH-MUMBAI"></div>
+          <button onclick="placePurchaseOrder()">Place purchase order</button>
+        </div>
+        <div id="poMsg" class="msg"></div>
+      </section>
+
+      <section>
+        <h2>Purchase order history</h2>
+        <div class="row"><button class="secondary" onclick="listPurchaseOrders()">Refresh</button></div>
+        <div id="poList"></div>
+      </section>
+
+    </div>
+
+  </div>
+
+  <details class="devlog">
+    <summary>Developer log (raw API requests/responses)</summary>
+    <pre id="log">Nothing sent yet.</pre>
+  </details>
 
 </main>
 
 <script src="common.js"></script>
 <script>
   restoreSessionIfPresent();
+  if (getToken()) { loadProfitReport(); listPurchaseOrders(); }
 
   async function login() {
     if (await doLogin('ADMIN', 'loginUser', 'loginPass', 'loginMsg')) {
       showGate();
-      listPurchaseOrders();
       loadProfitReport();
+      listPurchaseOrders();
     }
+  }
+
+  function showTab(name) {
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.tab-panel').forEach(p => { p.classList.remove('active'); p.style.display = 'none'; });
+    document.querySelector(`.tab-btn[onclick="showTab('${name}')"]`).classList.add('active');
+    const panel = document.getElementById('tab-' + name);
+    panel.classList.add('active');
+    panel.style.display = 'grid';
   }
 
   async function onboardVendor() {
@@ -130,7 +191,7 @@
         username: document.getElementById('vUser').value,
         password: document.getElementById('vPass').value
       });
-      el.className = 'msg ok'; el.textContent = `Onboarded vendor ${vendor.vendorId} (${vendor.name})`;
+      el.className = 'msg ok'; el.textContent = `Onboarded vendor "${vendor.name}".`;
     } catch (e) {
       el.className = 'msg error'; el.textContent = 'Failed: ' + (e.body && (e.body.message || JSON.stringify(e.body.fieldErrors)) || e.status);
     }
@@ -156,7 +217,7 @@
           region: document.getElementById('cShipRegion').value
         }
       });
-      el.className = 'msg ok'; el.textContent = `Onboarded customer ${customer.customerNo} (${customer.name})`;
+      el.className = 'msg ok'; el.textContent = `Onboarded customer "${customer.name}".`;
     } catch (e) {
       el.className = 'msg error'; el.textContent = 'Failed: ' + (e.body && (e.body.message || JSON.stringify(e.body.fieldErrors)) || e.status);
     }
@@ -172,7 +233,36 @@
         username: document.getElementById('carUser').value,
         password: document.getElementById('carPass').value
       });
-      el.className = 'msg ok'; el.textContent = `Onboarded carrier ${carrier.carrierCode} (${carrier.carrierName})`;
+      el.className = 'msg ok'; el.textContent = `Onboarded carrier "${carrier.carrierName}".`;
+    } catch (e) {
+      el.className = 'msg error'; el.textContent = 'Failed: ' + (e.body && (e.body.message || JSON.stringify(e.body.fieldErrors)) || e.status);
+    }
+  }
+
+  async function registerWarehouse() {
+    const el = document.getElementById('whMsg');
+    el.className = 'msg'; el.textContent = 'Registering…';
+    try {
+      const warehouse = await api('POST', '/api/inventory/warehouses', {
+        warehouseId: document.getElementById('whId').value,
+        location: document.getElementById('whLocation').value,
+        region: document.getElementById('whRegion').value
+      });
+      el.className = 'msg ok'; el.textContent = `Registered ${warehouse.warehouseId} in ${warehouse.region}.`;
+    } catch (e) {
+      el.className = 'msg error'; el.textContent = 'Failed: ' + (e.body && (e.body.message || JSON.stringify(e.body.fieldErrors)) || e.status);
+    }
+  }
+
+  async function setSalePrice() {
+    const el = document.getElementById('priceMsg');
+    el.className = 'msg'; el.textContent = 'Pricing…';
+    try {
+      const item = await api('POST', '/api/inventory/catalog', {
+        skuNumber: document.getElementById('priceSku').value,
+        salePrice: Number(document.getElementById('priceAmount').value)
+      });
+      el.className = 'msg ok'; el.textContent = `Priced ${item.productName || item.skuNumber} at $${Number(item.salePrice).toFixed(2)} (weight ${item.unitWeight} kg, fetched from the vendor automatically).`;
     } catch (e) {
       el.className = 'msg error'; el.textContent = 'Failed: ' + (e.body && (e.body.message || JSON.stringify(e.body.fieldErrors)) || e.status);
     }
@@ -187,7 +277,7 @@
         quantity: Number(document.getElementById('poQty').value),
         warehouseId: document.getElementById('poWarehouse').value
       });
-      el.className = 'msg ok'; el.textContent = `Placed purchase order ${po.purchaseOrderId} (${po.status})`;
+      el.className = 'msg ok'; el.textContent = `Placed and ${po.status.toLowerCase()}.`;
       listPurchaseOrders();
     } catch (e) {
       el.className = 'msg error'; el.textContent = 'Failed: ' + (e.body && (e.body.message || JSON.stringify(e.body.fieldErrors)) || e.status);
@@ -197,20 +287,17 @@
   async function listPurchaseOrders() {
     try {
       const orders = await api('GET', '/api/purchase-orders');
-      const table = document.getElementById('poTable');
-      const tbody = document.getElementById('poTableBody');
-      tbody.innerHTML = orders.map(po => `
-        <tr>
-          <td><code>${po.purchaseOrderId.slice(0, 8)}…</code></td>
-          <td>${po.vendorId ? po.vendorId.slice(0, 8) + '…' : ''}</td>
-          <td>${po.skuNumber}</td>
-          <td>${po.quantity}</td>
-          <td>${po.warehouseId || '—'}</td>
-          <td>${po.purpose}</td>
-          <td><span class="badge ${po.status}">${po.status}</span></td>
-        </tr>`).join('');
-      table.style.display = orders.length ? 'table' : 'none';
-    } catch (e) { /* ignore -- log panel already shows the failure */ }
+      const list = document.getElementById('poList');
+      if (!orders.length) { list.innerHTML = '<div class="empty-state">No purchase orders yet.</div>'; return; }
+      list.innerHTML = orders.map(po => `
+        <div class="cart-line">
+          <div>
+            <div class="name">${po.skuNumber} &times; ${po.quantity}</div>
+            <div class="sub" style="margin:0;">${po.warehouseId ? 'To ' + po.warehouseId : 'Direct to customer'} &middot; <span class="badge ${po.purpose}">${po.purpose}</span></div>
+          </div>
+          <span class="badge ${po.status}">${po.status}</span>
+        </div>`).join('');
+    } catch (e) { /* dev log shows the failure */ }
   }
 
   async function loadProfitReport() {
@@ -218,22 +305,23 @@
     el.className = 'msg'; el.textContent = 'Loading…';
     try {
       const report = await api('GET', '/api/analytics/profit');
+      document.getElementById('profitTotal').textContent = '$' + Number(report.totalProfit).toFixed(2);
+      document.getElementById('profitSkuCount').textContent = report.lines.length;
       const table = document.getElementById('profitTable');
       const tbody = document.getElementById('profitTableBody');
       tbody.innerHTML = report.lines.map(l => `
         <tr>
           <td><code>${l.skuNumber}</code></td>
           <td>${l.quantitySold}</td>
-          <td>${l.salePrice}</td>
-          <td>${l.costPrice}</td>
-          <td>${l.profitPerUnit}</td>
-          <td>${l.totalProfit}</td>
+          <td>$${Number(l.salePrice).toFixed(2)}</td>
+          <td>$${Number(l.costPrice).toFixed(2)}</td>
+          <td>$${Number(l.profitPerUnit).toFixed(2)}</td>
+          <td>$${Number(l.totalProfit).toFixed(2)}</td>
         </tr>`).join('');
       table.style.display = report.lines.length ? 'table' : 'none';
       el.className = 'msg'; el.textContent = report.lines.length ? '' : 'No sales yet.';
-      document.getElementById('profitTotal').textContent = `Total profit: ${report.totalProfit}`;
     } catch (e) {
-      el.className = 'msg error'; el.textContent = 'Failed: ' + (e.body && e.body.message || e.status);
+      el.className = 'msg error'; el.textContent = 'Could not load the profit report.';
     }
   }
 </script>

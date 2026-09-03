@@ -3,18 +3,21 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Impulse — Vendor</title>
+<title>Impulse Seller Center</title>
 <link rel="stylesheet" href="common.css">
 </head>
 <body>
 
 <header>
-  <div>
-    <h1>Impulse — Vendor</h1>
-    <p>Manage your product catalog; see your purchase-order history.</p>
+  <div class="brand">
+    <div class="logo">I</div>
+    <div>
+      <h1>Seller Center</h1>
+      <p>Manage your catalog and track purchase orders from Impulse.</p>
+    </div>
   </div>
   <div>
-    <nav><a href="admin.html">Admin</a><a href="customer.html">Customer</a><a href="carrier.html">Carrier</a></nav>
+    <nav><a href="admin.html">Admin</a><a href="customer.html">Store</a><a href="carrier.html">Carrier</a></nav>
     <div id="whoami" class="whoami"></div>
   </div>
 </header>
@@ -22,56 +25,65 @@
 <main>
 
   <section id="loginPanel" class="login-panel">
-    <h2>Sign in <small>VENDOR</small></h2>
+    <h2>Sign in</h2>
     <div class="row">
       <div class="field"><label>Username</label><input id="loginUser" value="vendor-demo"></div>
       <div class="field"><label>Password</label><input id="loginPass" type="password" value="vendor-demo-pass"></div>
       <button onclick="login()">Sign in</button>
     </div>
     <div id="loginMsg" class="msg"></div>
-    <p class="sub">An admin onboards vendors from <a href="admin.html">admin.html</a>; sign in with the credentials given at onboarding time.</p>
+    <p class="sub">An admin sets up vendor accounts from <a href="admin.html">admin.html</a>.</p>
   </section>
 
-  <section class="gate">
-    <h2>Add a product</h2>
-    <div class="row">
-      <div class="field"><label>Product name</label><input id="pName" value="Widget B"></div>
-      <div class="field"><label>Sku number</label><input id="pSku" value="ACME-WIDGET-B"></div>
-      <div class="field"><label>Description</label><input id="pDesc" value=""></div>
-      <div class="field"><label>Unit weight (kg)</label><input id="pWeight" value="2.000"></div>
-      <div class="field"><label>Cost price</label><input id="pCost" value="40.00"></div>
-      <button onclick="addProduct()">Add product</button>
-    </div>
-    <div id="pMsg" class="msg"></div>
-  </section>
+  <div class="gate" style="display:grid; gap:24px;">
 
-  <section class="gate">
-    <h2>Your products</h2>
-    <div class="row"><button class="secondary" onclick="listProducts()">Refresh</button></div>
-    <table id="productTable" style="display:none;">
-      <thead><tr><th>Product ID</th><th>Name</th><th>Sku</th><th>Weight</th><th>Cost price</th><th></th></tr></thead>
-      <tbody id="productTableBody"></tbody>
-    </table>
-  </section>
+    <section>
+      <h2>Overview</h2>
+      <div class="stat-grid">
+        <div class="stat-card"><div class="label">Products listed</div><div class="value" id="statProductCount">—</div></div>
+        <div class="stat-card"><div class="label">Purchase orders received</div><div class="value" id="statPoCount">—</div></div>
+        <div class="stat-card"><div class="label">Fulfilled</div><div class="value ok" id="statPoFulfilled">—</div></div>
+      </div>
+    </section>
 
-  <section class="gate">
-    <h2>Your purchase-order history</h2>
-    <div class="row"><button class="secondary" onclick="listPurchaseOrders()">Refresh</button></div>
-    <table id="poTable" style="display:none;">
-      <thead><tr><th>PO ID</th><th>Sku</th><th>Qty</th><th>Warehouse</th><th>Purpose</th><th>Status</th></tr></thead>
-      <tbody id="poTableBody"></tbody>
-    </table>
-  </section>
+    <section>
+      <h2>List a new product</h2>
+      <div class="row">
+        <div class="field"><label>Product name</label><input id="pName" value="Widget B"></div>
+        <div class="field"><label>Sku number</label><input id="pSku" value="ACME-WIDGET-B"></div>
+        <div class="field"><label>Description</label><input id="pDesc" value=""></div>
+        <div class="field"><label>Unit weight (kg)</label><input id="pWeight" value="2.000"></div>
+        <div class="field"><label>Your cost price</label><input id="pCost" value="40.00"></div>
+        <button onclick="addProduct()">List product</button>
+      </div>
+      <div id="pMsg" class="msg"></div>
+    </section>
 
-  <div class="log-title">Last request / response</div>
-  <pre id="log">Nothing sent yet.</pre>
+    <section>
+      <h2>Your products</h2>
+      <div id="productMsg" class="msg"></div>
+      <div id="productGrid" class="product-grid"></div>
+    </section>
+
+    <section>
+      <h2>Purchase orders from Impulse</h2>
+      <p class="sub">Impulse's mock vendor-fulfillment fulfills every order automatically, the moment it's placed.</p>
+      <div id="poMsg" class="msg"></div>
+      <div id="poList"></div>
+    </section>
+
+  </div>
+
+  <details class="devlog">
+    <summary>Developer log (raw API requests/responses)</summary>
+    <pre id="log">Nothing sent yet.</pre>
+  </details>
 
 </main>
 
 <script src="common.js"></script>
 <script>
   restoreSessionIfPresent();
-  if (getToken()) { listProducts(); listPurchaseOrders(); }
 
   async function login() {
     if (await doLogin('VENDOR', 'loginUser', 'loginPass', 'loginMsg')) {
@@ -83,7 +95,7 @@
 
   async function addProduct() {
     const el = document.getElementById('pMsg');
-    el.className = 'msg'; el.textContent = 'Adding…';
+    el.className = 'msg'; el.textContent = 'Listing…';
     try {
       const product = await api('POST', '/api/vendor/products', {
         productName: document.getElementById('pName').value,
@@ -92,10 +104,10 @@
         unitWeight: Number(document.getElementById('pWeight').value),
         costPrice: Number(document.getElementById('pCost').value)
       });
-      el.className = 'msg ok'; el.textContent = `Added product ${product.productId} (${product.skuNumber})`;
+      el.className = 'msg ok'; el.textContent = `Listed ${product.productName} (${product.skuNumber}). Ask admin to set a sale price so it appears in the store.`;
       listProducts();
     } catch (e) {
-      el.className = 'msg error'; el.textContent = 'Failed: ' + (e.body && (e.body.message || JSON.stringify(e.body.fieldErrors)) || e.status);
+      el.className = 'msg error'; el.textContent = 'Could not list that product: ' + (e.body && (e.body.message || JSON.stringify(e.body.fieldErrors)) || e.status);
     }
   }
 
@@ -103,43 +115,59 @@
     try {
       await api('DELETE', `/api/vendor/products/${productId}`);
       listProducts();
-    } catch (e) { /* log panel shows the failure */ }
+    } catch (e) { /* dev log shows the failure */ }
   }
 
   async function listProducts() {
+    const el = document.getElementById('productMsg');
     try {
       const products = await api('GET', '/api/vendor/products');
-      const table = document.getElementById('productTable');
-      const tbody = document.getElementById('productTableBody');
-      tbody.innerHTML = products.map(p => `
-        <tr>
-          <td>${p.productId}</td>
-          <td>${p.productName}</td>
-          <td><code>${p.skuNumber}</code></td>
-          <td>${p.unitWeight}</td>
-          <td>${p.costPrice}</td>
-          <td><button class="danger" onclick="removeProduct(${p.productId})">Remove</button></td>
-        </tr>`).join('');
-      table.style.display = products.length ? 'table' : 'none';
-    } catch (e) { /* ignore -- log panel already shows the failure */ }
+      document.getElementById('statProductCount').textContent = products.length;
+      const grid = document.getElementById('productGrid');
+      if (!products.length) {
+        grid.innerHTML = '';
+        el.className = 'msg'; el.textContent = 'Nothing listed yet -- add your first product above.';
+        return;
+      }
+      el.textContent = '';
+      grid.innerHTML = products.map(p => `
+        <div class="product-card">
+          <div class="thumb">📦</div>
+          <div class="name">${p.productName}</div>
+          <div class="sku">${p.skuNumber}</div>
+          <div class="price">Cost: $${Number(p.costPrice).toFixed(2)}</div>
+          <div class="weight">${p.unitWeight} kg / unit</div>
+          <button class="danger" onclick="removeProduct(${p.productId})">Remove</button>
+        </div>`).join('');
+    } catch (e) {
+      el.className = 'msg error'; el.textContent = 'Could not load your products.';
+    }
   }
 
   async function listPurchaseOrders() {
+    const el = document.getElementById('poMsg');
     try {
       const orders = await api('GET', '/api/purchase-orders');
-      const table = document.getElementById('poTable');
-      const tbody = document.getElementById('poTableBody');
-      tbody.innerHTML = orders.map(po => `
-        <tr>
-          <td><code>${po.purchaseOrderId.slice(0, 8)}…</code></td>
-          <td>${po.skuNumber}</td>
-          <td>${po.quantity}</td>
-          <td>${po.warehouseId || '—'}</td>
-          <td>${po.purpose}</td>
-          <td><span class="badge ${po.status}">${po.status}</span></td>
-        </tr>`).join('');
-      table.style.display = orders.length ? 'table' : 'none';
-    } catch (e) { /* ignore -- log panel already shows the failure */ }
+      document.getElementById('statPoCount').textContent = orders.length;
+      document.getElementById('statPoFulfilled').textContent = orders.filter(po => po.status === 'FULFILLED').length;
+      const list = document.getElementById('poList');
+      if (!orders.length) {
+        list.innerHTML = '';
+        el.className = 'msg'; el.textContent = 'No purchase orders yet.';
+        return;
+      }
+      el.textContent = '';
+      list.innerHTML = orders.map(po => `
+        <div class="cart-line">
+          <div>
+            <div class="name">${po.skuNumber} &times; ${po.quantity}</div>
+            <div class="sub" style="margin:0;">${po.warehouseId ? 'To ' + po.warehouseId : 'Direct to customer'} &middot; <span class="badge ${po.purpose}">${po.purpose}</span></div>
+          </div>
+          <span class="badge ${po.status}">${po.status}</span>
+        </div>`).join('');
+    } catch (e) {
+      el.className = 'msg error'; el.textContent = 'Could not load purchase orders.';
+    }
   }
 </script>
 
