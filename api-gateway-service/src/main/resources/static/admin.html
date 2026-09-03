@@ -39,6 +39,7 @@
       <button class="tab-btn" onclick="showTab('onboarding')">Onboarding</button>
       <button class="tab-btn" onclick="showTab('stock')">Purchase Orders</button>
       <button class="tab-btn" onclick="showTab('directory')">Directory</button>
+      <button class="tab-btn" onclick="showTab('users')">Users</button>
     </div>
 
     <div id="tab-dashboard" class="tab-panel active" style="display:grid; gap:24px;">
@@ -176,6 +177,55 @@
 
     </div>
 
+    <div id="tab-users" class="tab-panel" style="display:none; gap:24px;">
+
+      <section>
+        <h2>Users <small id="userCount"></small></h2>
+        <p class="sub">Every login this platform knows about. Editing role/business id or disabling a user takes effect immediately -- a disabled user is rejected at their next login attempt, the same way a wrong password is.</p>
+        <div class="row"><button class="secondary" onclick="loadUsers()">Refresh</button></div>
+        <div id="usersMsg" class="msg"></div>
+        <table id="usersTable" style="display:none;">
+          <thead><tr><th>Username</th><th>Role</th><th>Business ID</th><th>Enabled</th><th></th></tr></thead>
+          <tbody id="usersTableBody"></tbody>
+        </table>
+      </section>
+
+      <section id="editUserSection" style="display:none;">
+        <h2>Edit user <span id="editUserUsername"></span></h2>
+        <div class="row">
+          <div class="field">
+            <label>Role</label>
+            <select id="editUserRole">
+              <option value="ADMIN">ADMIN</option>
+              <option value="VENDOR">VENDOR</option>
+              <option value="CUSTOMER">CUSTOMER</option>
+              <option value="CARRIER">CARRIER</option>
+            </select>
+          </div>
+          <div class="field"><label>Business ID</label><input id="editUserBusinessId"></div>
+          <div class="field">
+            <label>Enabled</label>
+            <select id="editUserEnabled"><option value="true">Yes</option><option value="false">No</option></select>
+          </div>
+          <button onclick="saveUserEdit()">Save changes</button>
+          <button class="secondary" onclick="closeUserEdit()">Cancel</button>
+        </div>
+        <div id="editUserMsg" class="msg"></div>
+      </section>
+
+      <section id="setPasswordSection" style="display:none;">
+        <h2>Set password for <span id="setPasswordUsername"></span></h2>
+        <div class="row">
+          <div class="field"><label>New password</label><input id="setPasswordNew" type="password"></div>
+          <div class="field"><label>Confirm password</label><input id="setPasswordConfirm" type="password"></div>
+          <button onclick="saveNewPassword()">Set password</button>
+          <button class="secondary" onclick="closeSetPassword()">Cancel</button>
+        </div>
+        <div id="setPasswordMsg" class="msg"></div>
+      </section>
+
+    </div>
+
   </div>
 
   <details class="devlog">
@@ -197,6 +247,7 @@
       loadVendorDirectory();
       loadCustomerDirectory();
       loadCarrierDirectory();
+      loadUsers();
     }
   }
 
@@ -476,6 +527,121 @@
     const showing = container.style.display === 'block';
     container.style.display = showing ? 'none' : 'block';
     button.textContent = showing ? 'View rates' : 'Hide rates';
+  }
+
+  // --- Users: real admin actions against auth-service, not a read-only directory. ---
+
+  let users = [];
+
+  async function loadUsers() {
+    const el = document.getElementById('usersMsg');
+    el.className = 'msg'; el.textContent = 'Loading…';
+    try {
+      users = await api('GET', '/auth/users');
+      document.getElementById('userCount').textContent = `(${users.length})`;
+      const table = document.getElementById('usersTable');
+      const tbody = document.getElementById('usersTableBody');
+      tbody.innerHTML = users.map(u => `
+        <tr>
+          <td>${escapeHtml(u.username)}</td>
+          <td>${escapeHtml(u.role)}</td>
+          <td><code>${escapeHtml(u.businessId)}</code></td>
+          <td>${u.enabled ? '<span class="badge ok">Enabled</span>' : '<span class="badge error">Disabled</span>'}</td>
+          <td>
+            <button class="secondary" onclick="openUserEdit('${escapeAttr(u.username)}')">Edit</button>
+            <button class="secondary" onclick="openSetPassword('${escapeAttr(u.username)}')">Set password</button>
+            <button class="${u.enabled ? 'danger' : 'secondary'}" onclick="toggleUserEnabled('${escapeAttr(u.username)}')">${u.enabled ? 'Disable' : 'Enable'}</button>
+          </td>
+        </tr>`).join('');
+      table.style.display = users.length ? 'table' : 'none';
+      el.className = 'msg'; el.textContent = users.length ? '' : 'No users found.';
+    } catch (e) {
+      el.className = 'msg error'; el.textContent = 'Could not load users.';
+    }
+  }
+
+  function openUserEdit(username) {
+    const user = users.find(u => u.username === username);
+    if (!user) return;
+    document.getElementById('editUserSection').style.display = 'block';
+    document.getElementById('setPasswordSection').style.display = 'none';
+    document.getElementById('editUserUsername').textContent = username;
+    document.getElementById('editUserUsername').dataset.username = username;
+    document.getElementById('editUserRole').value = user.role;
+    document.getElementById('editUserBusinessId').value = user.businessId;
+    document.getElementById('editUserEnabled').value = String(user.enabled);
+    document.getElementById('editUserMsg').textContent = '';
+  }
+
+  function closeUserEdit() {
+    document.getElementById('editUserSection').style.display = 'none';
+  }
+
+  async function saveUserEdit() {
+    const username = document.getElementById('editUserUsername').dataset.username;
+    const el = document.getElementById('editUserMsg');
+    el.className = 'msg'; el.textContent = 'Saving…';
+    try {
+      await api('PUT', `/auth/users/${encodeURIComponent(username)}`, {
+        role: document.getElementById('editUserRole').value,
+        businessId: document.getElementById('editUserBusinessId').value,
+        enabled: document.getElementById('editUserEnabled').value === 'true'
+      });
+      el.className = 'msg ok'; el.textContent = 'Saved.';
+      loadUsers();
+    } catch (e) {
+      el.className = 'msg error'; el.textContent = 'Failed: ' + (e.body && (e.body.message || JSON.stringify(e.body.fieldErrors)) || e.status);
+    }
+  }
+
+  async function toggleUserEnabled(username) {
+    const user = users.find(u => u.username === username);
+    if (!user) return;
+    try {
+      await api('PUT', `/auth/users/${encodeURIComponent(username)}`, {
+        role: user.role,
+        businessId: user.businessId,
+        enabled: !user.enabled
+      });
+      loadUsers();
+    } catch (e) {
+      const el = document.getElementById('usersMsg');
+      el.className = 'msg error'; el.textContent = 'Could not update ' + username + ': ' + (e.body && e.body.message || e.status);
+    }
+  }
+
+  function openSetPassword(username) {
+    document.getElementById('setPasswordSection').style.display = 'block';
+    document.getElementById('editUserSection').style.display = 'none';
+    document.getElementById('setPasswordUsername').textContent = username;
+    document.getElementById('setPasswordUsername').dataset.username = username;
+    document.getElementById('setPasswordNew').value = '';
+    document.getElementById('setPasswordConfirm').value = '';
+    document.getElementById('setPasswordMsg').textContent = '';
+  }
+
+  function closeSetPassword() {
+    document.getElementById('setPasswordSection').style.display = 'none';
+  }
+
+  async function saveNewPassword() {
+    const username = document.getElementById('setPasswordUsername').dataset.username;
+    const el = document.getElementById('setPasswordMsg');
+    const newPassword = document.getElementById('setPasswordNew').value;
+    const confirmPassword = document.getElementById('setPasswordConfirm').value;
+
+    if (newPassword !== confirmPassword) {
+      el.className = 'msg error'; el.textContent = 'Passwords do not match.';
+      return;
+    }
+
+    el.className = 'msg'; el.textContent = 'Setting password…';
+    try {
+      await api('POST', `/auth/users/${encodeURIComponent(username)}/password`, { newPassword });
+      el.className = 'msg ok'; el.textContent = 'Password updated.';
+    } catch (e) {
+      el.className = 'msg error'; el.textContent = 'Failed: ' + (e.body && (e.body.message || JSON.stringify(e.body.fieldErrors)) || e.status);
+    }
   }
 </script>
 

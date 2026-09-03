@@ -78,4 +78,26 @@ public class OrderController {
                 )
         );
     }
+
+    /**
+     * A real "My Orders" screen: the customer's own order history, gated CUSTOMER-only
+     * at the gateway (unlike the ungated {@code GET /api/orders} above, which stays
+     * exactly as open as before for {@code demo.html}). {@code customerId} comes only
+     * from the gateway-forwarded header -- the caller's verified JWT -- never a
+     * client-supplied query param, the same ownership pattern {@link #listAssignedOrders}
+     * already uses.
+     */
+    @GetMapping("/mine")
+    public ResponseEntity<List<OrderResponse>> listMyOrders(
+            @RequestHeader("X-User-Business-Id") String customerId,
+            @RequestParam(defaultValue = "0") @Min(0) int page,
+            @RequestParam(defaultValue = "20") @Min(1) @Max(100) int size
+    ) {
+
+        return ResponseEntity.ok(
+                orderService.listOrdersForCustomer(
+                        customerId, PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "createdAt"))
+                )
+        );
+    }
 }

@@ -3,6 +3,9 @@ package com.demo.auth_service.controller;
 import com.demo.auth_service.dto.CreateCredentialRequest;
 import com.demo.auth_service.dto.LoginRequest;
 import com.demo.auth_service.dto.LoginResponse;
+import com.demo.auth_service.dto.SetPasswordRequest;
+import com.demo.auth_service.dto.UpdateUserRequest;
+import com.demo.auth_service.dto.UserSummaryResponse;
 import com.demo.auth_service.service.AuthService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -10,6 +13,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
 import java.util.Map;
 
 @RestController
@@ -55,5 +59,27 @@ public class AuthController {
                 "username", username == null ? "" : username,
                 "role", role == null ? "" : role,
                 "businessId", businessId == null ? "" : businessId));
+    }
+
+    /** Admin-only user directory, gated at the gateway. Never returns password hashes. */
+    @GetMapping("/users")
+    public ResponseEntity<List<UserSummaryResponse>> listUsers() {
+        return ResponseEntity.ok(authService.listUsers());
+    }
+
+    /** Admin edits an existing user's role/businessId/enabled state. The username in the
+     * path is the identity key and is never rewritten. */
+    @PutMapping("/users/{username}")
+    public ResponseEntity<UserSummaryResponse> updateUser(
+            @PathVariable String username, @Valid @RequestBody UpdateUserRequest request) {
+        return ResponseEntity.ok(authService.updateUser(username, request));
+    }
+
+    /** Admin sets a user's password directly -- no reset-token/email flow. */
+    @PostMapping("/users/{username}/password")
+    public ResponseEntity<Void> setPassword(
+            @PathVariable String username, @Valid @RequestBody SetPasswordRequest request) {
+        authService.setPassword(username, request);
+        return ResponseEntity.noContent().build();
     }
 }

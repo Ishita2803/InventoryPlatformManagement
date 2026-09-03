@@ -66,6 +66,10 @@ public class OrderService {
         return tx.listOrdersForCarrier(carrierCode, pageable);
     }
 
+    public List<OrderResponse> listOrdersForCustomer(String customerId, Pageable pageable) {
+        return tx.listOrdersForCustomer(customerId, pageable);
+    }
+
     public OrderResponse transitionOrder(String orderId, OrderStatus target) {
         return tx.transitionOrder(orderId, target);
     }

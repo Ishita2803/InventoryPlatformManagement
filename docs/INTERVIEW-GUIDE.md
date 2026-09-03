@@ -45,6 +45,20 @@ Vendor, customer, and carrier are three separate services, not because their API
 big, but because each is a genuinely distinct actor with its own login and lifecycle —
 merging them to save a pod would couple three unrelated bounded contexts.
 
+**The storefront and admin console are real screens over real APIs, not a demo shell.**
+`customer.html`'s cart persists in `localStorage` (scoped per logged-in customer, cleared
+on checkout) so it survives a reload — unlike the JWT, which still lives in
+`sessionStorage` and is deliberately wiped every page load. "My Orders" calls a new,
+gateway-gated `GET /api/orders/mine` scoped server-side by the caller's own business id
+(not a client-supplied filter), and a billing screen renders a real invoice fetched from
+a new `GET /api/payments/invoices/{orderId}` — the first time a generated invoice is
+ever read back rather than only emailed. Admin gained real user management
+(`GET/PUT /auth/users`, `POST /auth/users/{username}/password`) — edit a user's
+role/business id, disable a login, or set a new password directly, all against
+`auth-service`, not a static directory. See plan.md's phase for this work for exactly
+what's still a stated simplification (no self-service password reset, invoice ownership
+not cross-checked against the caller's JWT).
+
 See `plan.md`'s Phase D1–D11 entries and `learn/22`–`learn/32` for the full build story,
 including every real bug found and fixed along the way (a data-sync gap between two
 `Product` tables, a schema-migration limitation, a reconciliation sweep that would have
@@ -66,7 +80,9 @@ where relevant; its own detailed data model and failure-mode deep-dive follow th
 > 3. Everything below is **true as of Phases 0–11.5**. Status is tracked in
 >    [`plan.md`](../plan.md); implementation detail in [`Agent.md`](../Agent.md).
 
-**Last updated:** 2026-08-26, after Phase 11.5.
+**Last updated:** 2026-08-26, after Phase 11.5. (Part D's own section above is kept in
+step separately — most recently 2026-09-04, after the user-management/storefront-
+completeness phase.)
 
 ---
 
@@ -724,10 +740,20 @@ answer than not having noticed.
 - **Single Kafka broker.** No replication, no HA. `acks=all` is set, which matters only once
   there's more than one broker.
 - **Auth is real but minimal.** `auth-service` issues HS256 JWTs over bcrypt-hashed
-  passwords, and the gateway enforces per-route/per-role authorization (Phase D1) — but
-  there is no refresh-token flow, no password reset, and expiry is short by design. This is
-  a demo of real auth *mechanics*, not a production identity system — say that plainly if
-  asked "is this how you'd do auth for real."
+  passwords, and the gateway enforces per-route/per-role authorization (Phase D1). Admin
+  can now edit a user's role/business id, disable a login, or set a new password
+  directly (the user-management phase) — but there is still no refresh-token flow and no
+  *self-service* password reset (no reset token, no email link; admin sets the new
+  password synchronously). Expiry is short by design. This is a demo of real auth
+  *mechanics*, not a production identity system — say that plainly if asked "is this how
+  you'd do auth for real."
+- **The billing screen reads payment-service's in-memory invoice map, not a database.**
+  `GET /api/payments/invoices/{orderId}` (user-management phase) is the first time a
+  generated invoice is read back rather than only emailed — but payment-service still has
+  no database, so a restart loses every invoice, same limitation `PaymentService.pay`
+  already had for charges. Also: ownership isn't cross-checked against the caller's JWT
+  on this route, the same already-stated "client-supplied identifier" simplification
+  Phase D10 documents for `customerId`.
 - **Unit price comes from the client** on the original Phase 1-11 `order-service`/
   `inventory-service` demo endpoints. The Part D catalog (`CatalogItem.salePrice`, set
   admin-side in `inventory-service`) fixes this for the Impulse domain, but the older

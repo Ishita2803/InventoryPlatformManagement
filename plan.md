@@ -1334,6 +1334,114 @@ all four redesigned pages load (`200`) from the real gateway.
 
 ---
 
+## Post-D11 — User management, real order history, and a billing screen ✅ *(done 2026-09-04)*
+
+Requested after the storefront redesign: Karthik wanted the storefront and admin console
+to stop feeling like a demo — a complete cart → checkout → billing/invoice flow for
+customers, and real admin user management (edit a user, set a password, disable a
+login), every screen backed by a real API call. Three decisions confirmed directly with
+Karthik before starting, not assumed:
+
+| Decision | Choice | Why |
+|---|---|---|
+| Password management | Admin sets a new password **directly**, no reset-token/email flow | Simpler, confirmed in scope for this phase. A self-service token-based reset is a stated, deferred follow-up, not silently out of scope. |
+| Billing | A real `GET` invoice endpoint plus an on-screen invoice page, not email-only | The invoice was already computed and held (`InvoiceService`'s in-memory map) — nothing to render it existed. |
+| Deployment | Code-only this session — **no GKE deploy, no CI/CD trigger, no cloud infra change** | Cost/teardown state (Phase 18) means a real deploy is a separate, explicit decision; this phase stays local/code. |
+
+- [x] `auth-service`: `Credential` gains `enabled` (default `true`, checked at login —
+      a disabled account is rejected the same way a wrong password is, so a client can't
+      tell the two apart). New admin-only endpoints: `GET /auth/users` (directory, never
+      returns the password hash), `PUT /auth/users/{username}` (role/businessId/enabled —
+      the username itself, the identity key, is never rewritten), `POST
+      /auth/users/{username}/password` (admin sets a new password directly, bcrypt-hashed,
+      minimum 8 characters). Gateway route `Path=/auth/users/**` added (still not a
+      blanket `/auth/**`, same reasoning as the existing `/auth/login`/`/auth/me` routes),
+      `JwtAuthFilter.ROUTE_ROLES` gates all three ADMIN-only. 5 new tests in
+      `AuthServiceTest`.
+- [x] `order-service`: a real "My Orders" screen needs a real, scoped history —
+      `GET /api/orders/mine` (new route, gated `CUSTOMER`-only at the gateway, scoped by
+      `X-User-Business-Id` from the verified JWT, the exact ownership pattern
+      `GET /api/orders/assigned` already established in Phase D10). **Deliberately not** a
+      change to the existing, ungated `GET /api/orders` — that route stays exactly as open
+      as it's always been, so `demo.html`'s unauthenticated use of it is untouched. 2 new
+      tests (`OrderServiceTest`, `OrderControllerTest`).
+- [x] `payment-service`: `GET /api/payments/invoices/{orderId}` reads the invoice
+      `InvoiceService.generate` already computed and held in its existing in-memory map —
+      no new persistence, same "mock provider, no database" shape as `PaymentService.pay`.
+      404 (`InvoiceNotFoundException`, this service's *first* exception/handler pair —
+      every route before this either always succeeded or was internal-only) for an order
+      that hasn't shipped/settled anything yet. New gateway route,
+      `GET /api/payments/invoices/**` **only** — every other payment-service route
+      (`pay`, the internal `invoices` POST, `behaviour`, `reset`) stays unrouted, reachable
+      only in-cluster, exactly as before. Gated `ADMIN`+`CUSTOMER` at
+      `JwtAuthFilter`; **ownership is not cross-checked against the caller's JWT here**,
+      stated plainly rather than implied otherwise — the same already-documented
+      "client-supplied identifier" limitation Phase D10 states for `customerId`. 2 new
+      tests in `InvoiceServiceTest`.
+- [x] `customer.html`: a real cart (line-item quantity +/-, remove, running subtotal)
+      persisted in **`localStorage`**, not `sessionStorage` — scoped per logged-in
+      customer's own business id, cleared on checkout. Deliberately *not* stored where
+      the JWT lives: `requireFreshLogin()` wipes `sessionStorage` on every page load by
+      design (Phase D10), and weakening that to keep a cart would have reintroduced the
+      exact "a token silently outlives the tab" risk that discipline exists to prevent.
+      A dedicated Cart tab (checkout fields + a live order summary) replaces the old
+      inline cart-in-the-Shop-tab layout; a confirmation panel appears after a successful
+      order (order id, status, total, a direct link to that order's invoice); "My Orders"
+      now calls the real `GET /api/orders/mine` instead of a session-only in-memory list;
+      a new billing/invoice panel renders `GET /api/payments/invoices/{orderId}` as a real
+      invoice (line total, shipped weight, carrier surcharge, total), with a plain message
+      for the 404 case (not yet invoiced / still backordered) rather than a raw error.
+- [x] `admin.html`: a new **Users** tab wired to the three new `auth-service` endpoints —
+      a real directory (never the password hash), an edit form (role/businessId/enabled),
+      a set-password form (new + confirm, checked client-side before the call), and a
+      one-click enable/disable toggle. All against real API calls, with inline
+      success/error feedback — not the collapsed developer log.
+- [x] `common.css` gained `.badge.ok`/`.badge.error` (enabled/disabled status), the only
+      shared-style addition this phase needed.
+
+**Real thing found while building this, worth knowing:** `payment-service` has no
+Lombok on its classpath at all (unlike `auth-service`/`order-service`) — a first attempt
+at its new `GlobalExceptionHandler` used `@Slf4j` and failed to compile
+(`package lombok.extern.slf4j does not exist`). Fixed by dropping the annotation; this
+service's existing classes (`PaymentService`) already use a plain SLF4J logger, so the
+fix also matches the module's own established style rather than introducing a new one.
+
+**A real bug a code review caught before this ever shipped:** the new Users table
+rendered `username`/`businessId` — both admin-editable strings — straight into
+`innerHTML`, unescaped, including inside an `onclick='...'` attribute. An admin setting
+another user's `businessId` to a script payload would have executed in the next admin's
+browser, which holds a live bearer JWT in `sessionStorage`. Fixed with `escapeHtml`/
+`escapeAttr` helpers added to `common.js` and used everywhere the Users table renders
+API data. The same review flagged that `toggleUserEnabled`'s catch block was empty —
+a failed enable/disable silently looked like it worked — now surfaced in the panel.
+
+**Stated limitation, not fixed and not hidden:** disabling a user blocks their *next*
+login attempt, but does not revoke a JWT already issued to them — `JwtAuthFilter` only
+checks signature/expiry/role, never calling back to `auth-service` or checking
+`enabled`. A token issued minutes before a disable stays valid for up to
+`jwt.expiry-seconds` (3600s) afterwards. Real token revocation would need a server-side
+blocklist or short-lived tokens with refresh, out of scope for this phase.
+
+**Verification, stated precisely.** `./mvnw verify` is green for `auth-service`,
+`payment-service`, and `api-gateway-service`. `order-service`'s non-Docker-dependent
+tests are green; its two Testcontainers MySQL ITs did not run in this session because
+Docker Desktop was not reachable in the environment this work was done in (`docker info`
+failed) — the same, already-documented limitation noted after Phase 21, not a new gap
+this phase introduced. **Not verified this session**: a live end-to-end run against the
+local Docker Compose stack (place an order, see it in "My Orders", view its invoice,
+edit a user, set a password, log in as the now-disabled user and confirm rejection) —
+Docker was unavailable here, so this is explicitly *not* claimed as done. That live
+walkthrough, plus the two Testcontainers ITs, is the concrete remaining step before this
+phase's capabilities should be described as "verified live" the way every other phase in
+this file is.
+
+**Exit: code-complete and unit/integration-tested (excluding the two Docker-dependent
+tests) as of 2026-09-04; live end-to-end verification against the running stack is the
+explicit remaining step, not yet done.** Nothing was deployed to GKE and no CI/CD run was
+triggered, per Karthik's explicit scope for this session.
+
+---
+
 ## Resume discipline
 
 Claim a capability **only after it is implemented and tested.** Interviewers ask about

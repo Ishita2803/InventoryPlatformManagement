@@ -70,6 +70,18 @@ class OrderServiceTest {
         assertThat(returned.status()).isEqualTo(OrderStatus.PENDING);
     }
 
+    @Test
+    @DisplayName("listOrdersForCustomer simply delegates to the customer-scoped repository query")
+    void listOrdersForCustomerDelegates() {
+
+        when(tx.listOrdersForCustomer(any(), any())).thenReturn(List.of(sampleResponse()));
+
+        List<OrderResponse> result = orderService.listOrdersForCustomer("CUST-1", null);
+
+        assertThat(result).containsExactly(sampleResponse());
+        verify(tx).listOrdersForCustomer("CUST-1", null);
+    }
+
     private OrderResponse sampleResponse() {
         return new OrderResponse(
                 "44444444-4444-4444-4444-444444444444",

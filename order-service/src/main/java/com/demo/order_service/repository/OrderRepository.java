@@ -34,6 +34,12 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
     @EntityGraph(attributePaths = "items")
     Page<Order> findByCarrierCode(String carrierCode, Pageable pageable);
 
+    /** A customer's own order history, scoped by {@code customerId} from the caller's
+     * verified JWT -- never a client-supplied query param, same ownership pattern as
+     * {@link #findByCarrierCode}. */
+    @EntityGraph(attributePaths = "items")
+    Page<Order> findByCustomerId(String customerId, Pageable pageable);
+
     /**
      * Orders that have sat in one status longer than they should have.
      *

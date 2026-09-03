@@ -58,6 +58,13 @@ public class JwtAuthFilter extends OncePerRequestFilter {
 
     static {
         ROUTE_ROLES.put("GET /auth/me", Set.of()); // any role, just needs to be a valid token
+
+        // User-management phase: admin-only directory, edit, and direct password-set.
+        // More specific than any pattern below, and there's no broader existing rule
+        // for /auth/users/** to conflict with -- these are brand-new routes.
+        ROUTE_ROLES.put("GET /auth/users", Set.of("ADMIN"));
+        ROUTE_ROLES.put("PUT /auth/users/**", Set.of("ADMIN"));
+        ROUTE_ROLES.put("POST /auth/users/**", Set.of("ADMIN"));
         ROUTE_ROLES.put("POST /api/vendor/onboard", Set.of("ADMIN"));
         ROUTE_ROLES.put("GET /api/vendor/vendors/**", Set.of("ADMIN"));
         // Admin can browse any vendor's catalog (needed to place a purchase order
@@ -120,6 +127,16 @@ public class JwtAuthFilter extends OncePerRequestFilter {
 
         // Phase D11: admin-only profit report, surfaced in admin.html.
         ROUTE_ROLES.put("GET /api/analytics/profit", Set.of("ADMIN"));
+
+        // User-management/storefront phase: billing screen. ADMIN and CUSTOMER may read
+        // any invoice by orderId -- ownership is NOT cross-checked against the caller's
+        // JWT here, the same already-stated "client-supplied identifier" limitation
+        // Phase D10 documents for customerId. Stated plainly, not hidden.
+        ROUTE_ROLES.put("GET /api/payments/invoices/**", Set.of("ADMIN", "CUSTOMER"));
+
+        // Customer's own order history -- a new, gated route (unlike GET /api/orders,
+        // which stays ungated for demo.html), scoped server-side by X-User-Business-Id.
+        ROUTE_ROLES.put("GET /api/orders/mine", Set.of("CUSTOMER"));
     }
 
     private static final AntPathMatcher PATH_MATCHER = new AntPathMatcher();

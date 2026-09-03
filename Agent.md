@@ -261,6 +261,21 @@ All four config clients boot on ports they know *only* from Config Server, repor
 `{"status":"UP"}` on `/actuator/health`, and register in Eureka as `ORDER-SERVICE`,
 `INVENTORY-SERVICE`, `NOTIFICATION-SERVICE`, `API-GATEWAY-SERVICE`.
 
+**Note on staleness (added 2026-09-04, not otherwise touched here):** everything above
+in this section predates Part D and was never updated as `payment-service`,
+`auth-service`, `vendor-service`, `customer-service`, `carrier-service`, Docker, or GKE
+landed — the "Not started" line above is wrong as of Part D and Part B, both of which are
+complete; see `plan.md` for the real, current status of every phase. Fully rewriting
+this section for Part D is out of scope for the change that added this note; the specific
+additions that change are documented here instead, to avoid the same drift compounding:
+`auth-service` gained `Credential.enabled` plus `GET/PUT /auth/users` and
+`POST /auth/users/{username}/password` (admin-only user management);
+`order-service`'s `OrderController` gained `GET /api/orders/mine` (a customer's own,
+gateway-scoped order history, alongside the existing unscoped `GET /api/orders` and the
+Phase D10 `GET /api/orders/assigned`); `payment-service`'s `PaymentController` gained
+`GET /api/payments/invoices/{orderId}` (reads `InvoiceService`'s existing in-memory map)
+and its first-ever `GlobalExceptionHandler`. Full detail in §10's 2026-09-04 entry.
+
 ---
 
 ## 6. `config-repo` is a git submodule
@@ -625,6 +640,46 @@ A 200 with **empty** `propertySources` means the filename doesn't match
 ## 10. Change log
 
 Newest first. Add an entry for every meaningful change.
+
+### 2026-09-04 — Post-D11: user management, real order history, a billing screen
+- **`auth-service`**: `Credential.enabled` (default `true`), checked at login with the
+  same exception as a wrong password. New admin-only `GET /auth/users`,
+  `PUT /auth/users/{username}`, `POST /auth/users/{username}/password` (direct
+  admin-set, bcrypt-hashed, min 8 chars) — the username itself is never rewritten.
+  Gateway gained a `Path=/auth/users/**` route and three `ROUTE_ROLES` entries, all
+  `ADMIN`-only.
+- **`order-service`**: new `GET /api/orders/mine` (gated `CUSTOMER`-only, scoped by
+  `X-User-Business-Id`) for a real "My Orders" history — the existing, ungated
+  `GET /api/orders` is untouched, so `demo.html` still works exactly as before.
+- **`payment-service`**: new `GET /api/payments/invoices/{orderId}` reads
+  `InvoiceService`'s existing in-memory map (no new persistence); 404 via a new
+  `InvoiceNotFoundException` + `GlobalExceptionHandler` — this service's *first*
+  exception handler, since every route before this always succeeded or was
+  internal-only. New gateway route restricted to this one payment-service path;
+  every other payment-service route stays unrouted. Gated `ADMIN`+`CUSTOMER`;
+  ownership is **not** cross-checked against the JWT, stated plainly.
+- **`customer.html`**: a real cart (qty +/-, remove, running subtotal) persisted in
+  `localStorage` (per-customer, cleared on checkout) — deliberately not
+  `sessionStorage`, which `requireFreshLogin()` wipes every page load by design. New
+  Cart tab, an order-confirmation panel, "My Orders" now backed by `GET
+  /api/orders/mine`, and a billing/invoice panel rendering the new payment-service GET
+  (with a plain message, not a raw error, for the 404 "not yet invoiced" case).
+- **`admin.html`**: new Users tab — directory (never the password hash), edit
+  role/businessId/enabled, set-password (new+confirm), one-click enable/disable — all
+  real API calls with inline feedback.
+- **Real bug found while building this**: `payment-service` has no Lombok on its
+  classpath (unlike `auth-service`/`order-service`); a `GlobalExceptionHandler` using
+  `@Slf4j` failed to compile. Fixed by using no logger at all in the handler (matching
+  the module's existing plain-SLF4J style elsewhere, not introducing Lombok fresh).
+- **Verification, stated precisely**: `./mvnw verify` green for `auth-service`,
+  `payment-service`, `api-gateway-service`; `order-service` green except its two
+  Testcontainers MySQL ITs, which did not run because Docker Desktop was unreachable in
+  this session (`docker info` failed) — the same pre-existing limitation noted after
+  Phase 21, not new. **Not done this session**: a live end-to-end run against the local
+  Compose stack, and the two Docker-dependent ITs. See `plan.md`'s entry for this phase
+  for the full, honest exit statement — do not describe this phase as "verified live"
+  until that walkthrough actually happens.
+- Nothing deployed to GKE; no CI/CD run triggered — explicit scope for this session.
 
 ### 2026-09-03 — Post-D11: storefront redesign for the four frontend pages
 - **`customer.html` becomes an actual storefront** rather than a raw API test harness:

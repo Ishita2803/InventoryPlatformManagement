@@ -3,6 +3,7 @@ package com.demo.payment_service.service;
 import com.demo.payment_service.client.CarrierServiceClient;
 import com.demo.payment_service.dto.InvoiceRequest;
 import com.demo.payment_service.dto.InvoiceResponse;
+import com.demo.payment_service.exception.InvoiceNotFoundException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -78,5 +79,20 @@ public class InvoiceService {
                 request.carrierCode(), response.totalAmount());
 
         return response;
+    }
+
+    /**
+     * Billing screen: the invoice previously generated for this order, or 404 if none
+     * exists yet -- a still-backordered sales order (nothing shipped, D8/D9 never called
+     * {@link #generate}) or an order that hasn't reached settlement. Reads the same
+     * in-memory map {@link #generate} writes; still no database, stated honestly the
+     * same way {@link #invoices} already is above.
+     */
+    public InvoiceResponse getByOrderId(String orderId) {
+        InvoiceResponse invoice = invoices.get(orderId);
+        if (invoice == null) {
+            throw new InvoiceNotFoundException(orderId);
+        }
+        return invoice;
     }
 }

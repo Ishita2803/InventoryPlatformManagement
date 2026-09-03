@@ -51,11 +51,20 @@ public class Credential {
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
+    /**
+     * Admin-managed kill switch, added for the user-management phase. Checked at login
+     * time, same exception as a wrong password -- a disabled account should not be
+     * distinguishable from one that never existed or was mistyped.
+     */
+    @Column(nullable = false)
+    private boolean enabled = true;
+
     public Credential(String username, String passwordHash, Role role, String businessId) {
         this.username = username;
         this.passwordHash = passwordHash;
         this.role = role;
         this.businessId = businessId;
         this.createdAt = Instant.now();
+        this.enabled = true;
     }
 }

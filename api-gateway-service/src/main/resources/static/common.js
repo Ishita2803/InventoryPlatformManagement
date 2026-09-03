@@ -22,6 +22,17 @@ function clearSession() {
  * dashes are fine, but be defensive) into something usable as one. */
 function cssId(value) { return String(value).replace(/[^a-zA-Z0-9_-]/g, '_'); }
 
+/** Escapes text dropped into innerHTML (e.g. an admin-editable username/businessId) so it
+ * renders as text, not markup -- these values come back from the API, not from a literal. */
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+/** Alias used when the value is interpolated inside an onclick="...('${...}')" attribute --
+ * escapeHtml already escapes the single quote that JS string literal is delimited by, along
+ * with the HTML delimiters the surrounding attribute is delimited by. */
+const escapeAttr = escapeHtml;
+
 function log(label, req, res) {
   const el = document.getElementById('log');
   if (el) el.textContent = `${label}\n\n--> ${JSON.stringify(req, null, 2)}\n\n<-- ${JSON.stringify(res, null, 2)}`;

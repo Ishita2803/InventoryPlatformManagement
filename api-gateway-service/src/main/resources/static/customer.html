@@ -38,24 +38,30 @@
   <div class="gate">
     <div class="tabs">
       <button class="tab-btn active" onclick="showTab('shop')">Shop</button>
+      <button class="tab-btn" onclick="showTab('cart')">Cart <span id="cartCountBadge"></span></button>
       <button class="tab-btn" onclick="showTab('orders')">My Orders</button>
     </div>
 
     <div id="tab-shop" class="tab-panel active" style="display:grid; gap:24px;">
-
       <section>
         <h2>Catalog</h2>
-        <p class="sub">Pick a quantity and add items to your cart.</p>
+        <p class="sub">Pick a quantity and add items to your cart. Your cart is saved -- it survives closing this tab.</p>
         <div id="catalogMsg" class="msg"></div>
         <div id="catalogGrid" class="product-grid"></div>
       </section>
+    </div>
+
+    <div id="tab-cart" class="tab-panel" style="display:none; gap:24px;">
 
       <section>
         <h2>Your cart</h2>
         <div id="cartLines" class="cart-panel"></div>
-        <div class="cart-total"><span>Total</span><span id="cartTotal">$0.00</span></div>
+        <div class="cart-total"><span>Subtotal</span><span id="cartTotal">$0.00</span></div>
+      </section>
 
-        <div class="row" style="margin-top:16px;">
+      <section id="checkoutSection">
+        <h2>Checkout</h2>
+        <div class="row">
           <div class="field">
             <label>Delivery method</label>
             <select id="deliveryMethod" onchange="onDeliveryMethodChange()">
@@ -71,28 +77,46 @@
             <label>Shipping method</label>
             <select id="carrierSelect"></select>
           </div>
+        </div>
+
+        <h3 style="margin-top:16px;">Order summary</h3>
+        <div id="orderSummary" class="stat-grid"></div>
+
+        <div class="row" style="margin-top:16px;">
           <button onclick="checkout()">Place order</button>
         </div>
         <div id="checkoutMsg" class="msg"></div>
+      </section>
+
+      <section id="confirmationSection" style="display:none;">
+        <h2>Order confirmed</h2>
+        <div id="confirmationBody"></div>
       </section>
 
     </div>
 
     <div id="tab-orders" class="tab-panel" style="display:none; gap:24px;">
       <section>
-        <h2>Orders placed this session</h2>
-        <p class="sub">Sessions don't persist a full order history yet -- this list is what you've placed since signing in. Paste any order id below to check its live status.</p>
+        <h2>My orders</h2>
+        <div class="row"><button class="secondary" onclick="loadMyOrders()">Refresh</button></div>
+        <div id="myOrdersMsg" class="msg"></div>
         <div id="myOrders"></div>
       </section>
 
       <section>
-        <h2>Check an order's status</h2>
+        <h2>Check any order's status</h2>
         <div class="row">
           <div class="field" style="width:340px;"><label>Order ID</label><input id="lookupOrderId" style="width:100%" placeholder="paste an orderId"></div>
           <button class="secondary" onclick="lookupOrder()">Check status</button>
         </div>
         <div id="lookupMsg" class="msg"></div>
         <div id="lookupResult"></div>
+      </section>
+
+      <section id="invoiceSection" style="display:none;">
+        <h2>Invoice / billing</h2>
+        <div id="invoiceMsg" class="msg"></div>
+        <div id="invoiceBody"></div>
       </section>
     </div>
 
@@ -110,16 +134,42 @@
   requireFreshLogin();
   let catalog = [];
   let cart = {}; // skuNumber -> { item, quantity }
-  let myOrders = [];
+
+  // --- Cart persistence -----------------------------------------------------------
+  // sessionStorage (the auth token's home) is wiped by requireFreshLogin() on every
+  // reload, so a cart stored there would vanish on refresh -- exactly the "demo-like"
+  // problem this phase exists to fix. localStorage survives a reload; it's scoped by
+  // the logged-in customer's own businessId so two different customer logins on the
+  // same browser never see each other's cart, and it's cleared on logout/checkout.
+  function cartStorageKey() {
+    return 'impulse_cart_' + getBusinessId();
+  }
+
+  function loadCartFromStorage() {
+    try {
+      const raw = localStorage.getItem(cartStorageKey());
+      cart = raw ? JSON.parse(raw) : {};
+    } catch (e) { cart = {}; }
+  }
+
+  function saveCartToStorage() {
+    localStorage.setItem(cartStorageKey(), JSON.stringify(cart));
+  }
+
+  function clearCartStorage() {
+    localStorage.removeItem(cartStorageKey());
+    cart = {};
+  }
 
   async function login() {
     if (await doLogin('CUSTOMER', 'loginUser', 'loginPass', 'loginMsg')) {
       showGate();
+      loadCartFromStorage();
       loadCatalog();
       loadRegions();
       loadCarriers();
       renderCart();
-      renderMyOrders();
+      loadMyOrders();
     }
   }
 
@@ -130,6 +180,8 @@
     const panel = document.getElementById('tab-' + name);
     panel.classList.add('active');
     panel.style.display = 'grid';
+    if (name === 'orders') { document.getElementById('invoiceSection').style.display = 'none'; }
+    if (name === 'cart') { renderCart(); }
   }
 
   async function loadCatalog() {
@@ -164,30 +216,62 @@
     const item = catalog.find(c => c.skuNumber === sku);
     const qty = Math.max(1, Number(document.getElementById('qty-' + cssId(sku)).value) || 1);
     if (cart[sku]) { cart[sku].quantity += qty; } else { cart[sku] = { item, quantity: qty }; }
+    saveCartToStorage();
+    renderCart();
+  }
+
+  function changeCartQuantity(sku, delta) {
+    if (!cart[sku]) return;
+    cart[sku].quantity = Math.max(1, cart[sku].quantity + delta);
+    saveCartToStorage();
     renderCart();
   }
 
   function removeFromCart(sku) {
     delete cart[sku];
+    saveCartToStorage();
     renderCart();
+  }
+
+  function cartEntries() { return Object.values(cart); }
+
+  function cartSubtotal() {
+    return cartEntries().reduce((s, { item, quantity }) => s + item.salePrice * quantity, 0);
   }
 
   function renderCart() {
     const lines = document.getElementById('cartLines');
-    const entries = Object.values(cart);
+    const entries = cartEntries();
+    const badge = document.getElementById('cartCountBadge');
+    const count = entries.reduce((s, { quantity }) => s + quantity, 0);
+    badge.textContent = count ? `(${count})` : '';
+
     if (!entries.length) {
       lines.innerHTML = '<div class="cart-empty">Your cart is empty.</div>';
     } else {
       lines.innerHTML = entries.map(({ item, quantity }) => `
         <div class="cart-line">
           <div><div class="name">${item.productName}</div><div class="sku">${item.skuNumber}</div></div>
-          <div><span class="qty">x${quantity}</span>$${(item.salePrice * quantity).toFixed(2)}
+          <div>
+            <button class="secondary" onclick="changeCartQuantity('${item.skuNumber}', -1)">-</button>
+            <span class="qty">x${quantity}</span>
+            <button class="secondary" onclick="changeCartQuantity('${item.skuNumber}', 1)">+</button>
+            <span style="margin-left:8px;">$${(item.salePrice * quantity).toFixed(2)}</span>
             <button class="danger" style="margin-left:8px;" onclick="removeFromCart('${item.skuNumber}')">Remove</button>
           </div>
         </div>`).join('');
     }
-    const total = entries.reduce((s, { item, quantity }) => s + item.salePrice * quantity, 0);
-    document.getElementById('cartTotal').textContent = '$' + total.toFixed(2);
+    document.getElementById('cartTotal').textContent = '$' + cartSubtotal().toFixed(2);
+    renderOrderSummary();
+  }
+
+  function renderOrderSummary() {
+    const entries = cartEntries();
+    const el = document.getElementById('orderSummary');
+    el.innerHTML = `
+      <div class="stat-card"><div class="label">Items</div><div class="value">${entries.reduce((s, { quantity }) => s + quantity, 0)}</div></div>
+      <div class="stat-card"><div class="label">Distinct skus</div><div class="value">${entries.length}</div></div>
+      <div class="stat-card"><div class="label">Subtotal</div><div class="value accent">$${cartSubtotal().toFixed(2)}</div></div>`;
   }
 
   function onDeliveryMethodChange() {
@@ -215,7 +299,7 @@
 
   async function checkout() {
     const el = document.getElementById('checkoutMsg');
-    const entries = Object.values(cart);
+    const entries = cartEntries();
     if (!entries.length) { el.className = 'msg error'; el.textContent = 'Your cart is empty.'; return; }
 
     const direct = document.getElementById('deliveryMethod').value === 'direct';
@@ -235,33 +319,61 @@
       const shipped = order.items.filter(i => i.warehouseId || order.direct).reduce((s, i) => s + i.quantity, 0);
       const backordered = order.items.filter(i => !i.warehouseId && !order.direct).reduce((s, i) => s + i.quantity, 0);
 
-      el.className = 'msg ok';
-      el.textContent = backordered
-        ? `Order placed! ${shipped} unit(s) shipping now, ${backordered} backordered. Total: $${Number(order.totalAmount).toFixed(2)}`
-        : `Order placed! Total: $${Number(order.totalAmount).toFixed(2)}`;
+      el.className = 'msg ok'; el.textContent = '';
 
-      cart = {};
+      document.getElementById('confirmationSection').style.display = 'block';
+      document.getElementById('confirmationBody').innerHTML = `
+        <div class="stat-grid" style="margin-bottom:12px;">
+          <div class="stat-card"><div class="label">Order ID</div><div class="value" style="font-size:16px;">${order.orderId}</div></div>
+          <div class="stat-card"><div class="label">Status</div><div class="value"><span class="badge ${order.status}">${order.status.replace('_', ' ')}</span></div></div>
+          <div class="stat-card"><div class="label">Total</div><div class="value accent">$${Number(order.totalAmount).toFixed(2)}</div></div>
+        </div>
+        <p class="sub">${backordered
+          ? `${shipped} unit(s) shipping now, ${backordered} backordered -- they'll ship automatically once restocked.`
+          : `All ${shipped} unit(s) shipping now.`}</p>
+        <div class="row">
+          <button class="secondary" onclick="viewInvoiceForOrder('${order.orderId}')">View invoice</button>
+          <button class="secondary" onclick="showTab('orders')">Go to My Orders</button>
+        </div>`;
+
+      clearCartStorage();
       renderCart();
-
-      myOrders.unshift(order);
-      renderMyOrders();
+      loadMyOrders();
       document.getElementById('lookupOrderId').value = order.orderId;
     } catch (e) {
       el.className = 'msg error'; el.textContent = 'Could not place the order: ' + (e.body && e.body.message || e.status);
     }
   }
 
-  function renderMyOrders() {
-    const el = document.getElementById('myOrders');
-    if (!myOrders.length) { el.innerHTML = '<div class="empty-state">No orders placed yet this session.</div>'; return; }
-    el.innerHTML = myOrders.map(o => `
-      <div class="cart-line">
-        <div>
-          <div class="name">Order ${o.orderId.slice(0, 8)}…</div>
-          <div class="sub" style="margin:0;">${o.items.length} item(s) &middot; ${o.direct ? 'Direct from vendor' : 'Standard delivery'}</div>
-        </div>
-        <div><span class="badge ${o.status}">${o.status.replace('_', ' ')}</span> $${Number(o.totalAmount).toFixed(2)}</div>
-      </div>`).join('');
+  // --- My Orders: a real, server-backed history, not a session-only list. -----------
+
+  async function loadMyOrders() {
+    const el = document.getElementById('myOrdersMsg');
+    el.className = 'msg'; el.textContent = 'Loading…';
+    try {
+      const orders = await api('GET', '/api/orders/mine');
+      const list = document.getElementById('myOrders');
+      if (!orders.length) {
+        list.innerHTML = '<div class="empty-state">No orders placed yet.</div>';
+        el.textContent = '';
+        return;
+      }
+      el.textContent = '';
+      list.innerHTML = orders.map(o => `
+        <div class="cart-line">
+          <div>
+            <div class="name">Order ${o.orderId.slice(0, 8)}…</div>
+            <div class="sub" style="margin:0;">${o.items.length} item(s) &middot; ${o.direct ? 'Direct from vendor' : 'Standard delivery'} &middot; placed ${new Date(o.createdAt).toLocaleString()}</div>
+          </div>
+          <div>
+            <span class="badge ${o.status}">${o.status.replace('_', ' ')}</span>
+            $${Number(o.totalAmount).toFixed(2)}
+            <button class="secondary" style="margin-left:8px;" onclick="viewInvoiceForOrder('${o.orderId}')">View invoice</button>
+          </div>
+        </div>`).join('');
+    } catch (e) {
+      el.className = 'msg error'; el.textContent = 'Could not load your orders.';
+    }
   }
 
   async function lookupOrder() {
@@ -278,10 +390,48 @@
           <div class="stat-card"><div class="label">Status</div><div class="value"><span class="badge ${order.status}">${order.status.replace('_', ' ')}</span></div></div>
           <div class="stat-card"><div class="label">Total</div><div class="value accent">$${Number(order.totalAmount).toFixed(2)}</div></div>
           <div class="stat-card"><div class="label">Items</div><div class="value">${order.items.length}</div></div>
-        </div>`;
+        </div>
+        <div class="row" style="margin-top:12px;"><button class="secondary" onclick="viewInvoiceForOrder('${order.orderId}')">View invoice</button></div>`;
     } catch (e) {
       el.className = 'msg error'; el.textContent = 'Order not found.';
       out.innerHTML = '';
+    }
+  }
+
+  // --- Billing / invoice screen. -----------------------------------------------------
+
+  async function viewInvoiceForOrder(orderId) {
+    showTab('orders');
+    const section = document.getElementById('invoiceSection');
+    const msg = document.getElementById('invoiceMsg');
+    const body = document.getElementById('invoiceBody');
+    section.style.display = 'block';
+    msg.className = 'msg'; msg.textContent = 'Loading invoice…';
+    body.innerHTML = '';
+    try {
+      const invoice = await api('GET', `/api/payments/invoices/${orderId}`);
+      msg.className = 'msg'; msg.textContent = '';
+      body.innerHTML = `
+        <div class="stat-grid" style="margin-bottom:12px;">
+          <div class="stat-card"><div class="label">Invoice</div><div class="value" style="font-size:15px;">${invoice.invoiceId}</div></div>
+          <div class="stat-card"><div class="label">Order</div><div class="value" style="font-size:15px;">${invoice.orderId}</div></div>
+          <div class="stat-card"><div class="label">Generated</div><div class="value" style="font-size:15px;">${new Date(invoice.generatedAt).toLocaleString()}</div></div>
+        </div>
+        <table>
+          <thead><tr><th></th><th>Amount</th></tr></thead>
+          <tbody>
+            <tr><td>Line total (shipped items)</td><td>$${Number(invoice.lineTotal).toFixed(2)}</td></tr>
+            <tr><td>Shipped weight</td><td>${invoice.totalWeight} kg</td></tr>
+            <tr><td>Carrier weight surcharge</td><td>$${Number(invoice.weightSurcharge).toFixed(2)}</td></tr>
+            <tr><td><b>Total</b></td><td><b>$${Number(invoice.totalAmount).toFixed(2)}</b></td></tr>
+          </tbody>
+        </table>
+        <p class="sub">A copy of this invoice was emailed at the time it was generated.</p>`;
+    } catch (e) {
+      msg.className = 'msg error';
+      msg.textContent = e.status === 404
+        ? 'No invoice yet -- this order may still be fully backordered, or has not settled.'
+        : 'Could not load the invoice.';
     }
   }
 </script>

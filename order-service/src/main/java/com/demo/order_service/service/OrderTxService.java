@@ -80,6 +80,14 @@ public class OrderTxService {
                 .getContent();
     }
 
+    /** A customer's own order history -- the real "My Orders" screen. */
+    @Transactional(readOnly = true)
+    public List<OrderResponse> listOrdersForCustomer(String customerId, Pageable pageable) {
+        return orderRepository.findByCustomerId(customerId, pageable)
+                .map(orderMapper::toResponse)
+                .getContent();
+    }
+
     @Transactional
     public OrderResponse transitionOrder(String orderId, OrderStatus target) {
 

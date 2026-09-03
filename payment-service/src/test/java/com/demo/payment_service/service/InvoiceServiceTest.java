@@ -3,6 +3,7 @@ package com.demo.payment_service.service;
 import com.demo.payment_service.client.CarrierServiceClient;
 import com.demo.payment_service.dto.InvoiceRequest;
 import com.demo.payment_service.dto.InvoiceResponse;
+import com.demo.payment_service.exception.InvoiceNotFoundException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -14,6 +15,7 @@ import java.math.BigDecimal;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.catchThrowable;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.times;
@@ -73,5 +75,28 @@ class InvoiceServiceTest {
 
         assertThat(second.invoiceId()).isEqualTo(first.invoiceId());
         verify(carrierServiceClient, times(1)).surchargeFor(any(), any());
+    }
+
+    @Test
+    @DisplayName("the billing screen's GET returns the same invoice generate() already produced")
+    void getByOrderIdReturnsThePreviouslyGeneratedInvoice() {
+
+        when(carrierServiceClient.surchargeFor(any(), any())).thenReturn(new BigDecimal("5.00"));
+
+        InvoiceRequest request = new InvoiceRequest("ORDER-3", "DTDC", List.of(
+                new InvoiceRequest.Line("SKU-1", 1, new BigDecimal("50.00"), new BigDecimal("1.000"))));
+
+        InvoiceResponse generated = invoiceService.generate(request);
+        InvoiceResponse fetched = invoiceService.getByOrderId("ORDER-3");
+
+        assertThat(fetched.invoiceId()).isEqualTo(generated.invoiceId());
+    }
+
+    @Test
+    @DisplayName("an order with no invoice yet -- e.g. wholly backordered -- is a 404, not a null")
+    void getByOrderIdThrowsWhenNoInvoiceExists() {
+
+        assertThat(catchThrowable(() -> invoiceService.getByOrderId("NEVER-INVOICED")))
+                .isInstanceOf(InvoiceNotFoundException.class);
     }
 }

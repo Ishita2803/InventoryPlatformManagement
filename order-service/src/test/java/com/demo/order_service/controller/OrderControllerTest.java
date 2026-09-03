@@ -19,6 +19,7 @@ import java.util.List;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -156,6 +157,19 @@ class OrderControllerTest {
         mockMvc.perform(get("/api/orders").param("page", "0").param("size", "10"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$[0].orderId").value(ORDER_ID));
+    }
+
+    @Test
+    @DisplayName("a customer's own order history is scoped by the gateway-forwarded business id")
+    void listMyOrdersScopedByBusinessId() throws Exception {
+
+        when(orderService.listOrdersForCustomer(eq("CUST-1"), any())).thenReturn(List.of(sampleResponse()));
+
+        mockMvc.perform(get("/api/orders/mine").header("X-User-Business-Id", "CUST-1"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].orderId").value(ORDER_ID));
+
+        verify(orderService).listOrdersForCustomer(eq("CUST-1"), any());
     }
 
     private OrderResponse sampleResponse() {

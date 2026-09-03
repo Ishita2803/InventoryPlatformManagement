@@ -42,6 +42,17 @@ public class PaymentController {
     }
 
     /**
+     * Billing screen (user-management/storefront phase): the only route on this
+     * controller ever routed through the public gateway. 404 if the order hasn't
+     * settled/shipped anything yet. Ownership is not cross-checked against the caller's
+     * JWT -- stated plainly at the gateway route declaration, not hidden here.
+     */
+    @GetMapping("/invoices/{orderId}")
+    public ResponseEntity<InvoiceResponse> getInvoice(@PathVariable String orderId) {
+        return ResponseEntity.ok(invoiceService.getByOrderId(orderId));
+    }
+
+    /**
      * Demo control: switch the mock between approving, declining and being slow.
      *
      * <p>Exists so the failure paths — decline, timeout, open circuit — can be shown live

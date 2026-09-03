@@ -50,6 +50,8 @@ button.danger { background: var(--panel-2); border: 1px solid var(--fail); color
 .badge.PENDING, .badge.INVENTORY_RESERVED { background: rgba(240,180,41,.15); color: var(--warn); }
 .badge.CONFIRMED, .badge.FULFILLED { background: rgba(62,207,142,.15); color: var(--ok); }
 .badge.INVENTORY_FAILED, .badge.CANCELLED { background: rgba(255,107,107,.15); color: var(--fail); }
+.badge.ok { background: rgba(62,207,142,.15); color: var(--ok); }
+.badge.error { background: rgba(255,107,107,.15); color: var(--fail); }
 
 table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 8px; }
 table th { text-align: left; color: var(--muted); font-size: 12px; padding: 6px 8px; }
