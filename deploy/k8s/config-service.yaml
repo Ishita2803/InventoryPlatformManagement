@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
         - name: config-service
-          image: us-central1-docker.pkg.dev/inventorymanagement-507107/order-platform-repo/config-service:204439c
+          image: us-central1-docker.pkg.dev/inventorymanagement-507107/order-platform-repo/config-service:2ac14e3
           ports:
             - containerPort: 8888
           resources:

@@ -16,7 +16,7 @@ spec:
       serviceAccountName: order-platform-workload
       containers:
         - name: carrier-service
-          image: us-central1-docker.pkg.dev/inventorymanagement-507107/order-platform-repo/carrier-service:latest
+          image: us-central1-docker.pkg.dev/inventorymanagement-507107/order-platform-repo/carrier-service:2ac14e3
           ports:
             - containerPort: 8088
           envFrom:

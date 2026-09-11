@@ -16,7 +16,7 @@ spec:
       serviceAccountName: order-platform-workload
       containers:
         - name: customer-service
-          image: us-central1-docker.pkg.dev/inventorymanagement-507107/order-platform-repo/customer-service:latest
+          image: us-central1-docker.pkg.dev/inventorymanagement-507107/order-platform-repo/customer-service:2ac14e3
           ports:
             - containerPort: 8087
           envFrom:

@@ -612,6 +612,20 @@ esourcesin\docker.exe` or start a new shell.
     500 on the very first partial-fulfillment order, fixed with a manual `ALTER TABLE
     order_item MODIFY COLUMN warehouse_id VARCHAR(64) NULL` (and the same for
     `product_id`) against the real order_db.
+56. **`deploy/k8s/*.yaml`'s image tag is a write-only artifact under the CI deploy job.**
+    CI's `deploy` step uses `kubectl set image` against the live Deployment — it never
+    reads or reconciles the manifest file, so the file's tag can silently go stale forever
+    with no build ever failing. All ten manifests were found pinned to old or `latest`
+    tags (`auth-service.yaml` still said `d1-manual`, from the very first Phase D1 manual
+    deploy) while the live cluster ran a much newer image. Harmless on its own, but a live
+    landmine: `kubectl apply -f deploy/k8s/<svc>.yaml` for any unrelated reason (tweaking a
+    probe, a resource limit, an env var) reverts that Deployment straight back to the
+    stale tag, with `apply` reporting success either way. Same failure shape as the Phase
+    16/17 and D1 gateway `JWT_SECRET` incidents. There is no fix for the mechanism itself
+    without moving to GitOps (a real next step, not done here to keep one moving part
+    instead of three — see the `deploy` job's own comment in `ci.yml`); the mitigation is
+    discipline — resync every manifest's tag whenever you touch one for any reason, not
+    just when you mean to change the image.
 
 ## 9. Startup order and verification (local)
 
@@ -641,6 +655,29 @@ A 200 with **empty** `propertySources` means the filename doesn't match
 ## 10. Change log
 
 Newest first. Add an entry for every meaningful change.
+
+### 2026-09-11 — All 10 `deploy/k8s/*.yaml` manifests were stale; synced to the live image
+- **Found while chasing a 404**: `auth-service.yaml` still pinned `auth-service:d1-manual`
+  — the very first Phase D1 manual deploy, from before `/auth/users` existed. Checking the
+  other nine manifests against what was actually running showed every one of them stale
+  (`204439c`, `f0c3e94`, or bare `latest`), not just this one.
+- **The live cluster itself was not actually broken.** CI's `deploy` job uses
+  `kubectl set image` (not `apply`), and this session's earlier `up.sh` node-pool incident
+  had already driven every deployment's live image to the newest tag (`2ac14e3`) as a
+  side effect of unsticking that rollout — confirmed with
+  `kubectl get deployment <svc> -o jsonpath='{.spec.template.spec.containers[0].image}'`
+  across all ten before touching anything. The 404 the other finding chased down had a
+  different cause; only the **manifest files** were wrong.
+- **Why this matters even with `set image` as the deploy mechanism**: the manifests are
+  still the thing a human reaches for to change anything else (a probe, a resource limit,
+  an env var). `kubectl apply -f deploy/k8s/auth-service.yaml` for any of those unrelated
+  reasons would have silently reverted the live Deployment to `d1-manual` — a real
+  regression with no error, since `apply` succeeds either way. Added as trap #{stale-manifest}
+  in §8; this is the same failure shape the Phase 16/17 and D1 gateway `JWT_SECRET`
+  incidents already hit, just never fixed at the source before now.
+- **Fix**: all ten `deploy/k8s/*.yaml` files now pin `:2ac14e3`, matching the live cluster
+  exactly. No `kubectl` command was needed this time — this entry is purely repo hygiene,
+  catching the drift before it could bite the next person who runs `apply`.
 
 ### 2026-09-11 — Post-D11: unified login and a real sidebar-portal shell for all four roles
 - **New `login.html`**: the single entry point for all four roles. `POST /auth/login`,

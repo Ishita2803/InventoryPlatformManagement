@@ -16,7 +16,7 @@ spec:
       serviceAccountName: order-platform-workload
       containers:
         - name: inventory-service
-          image: us-central1-docker.pkg.dev/inventorymanagement-507107/order-platform-repo/inventory-service:204439c
+          image: us-central1-docker.pkg.dev/inventorymanagement-507107/order-platform-repo/inventory-service:2ac14e3
           # The Secret Manager CSI driver's own service account lacks cluster-scope RBAC to
           # list/watch Secrets, so secretObjects (mirroring the mount into a native k8s
           # Secret for secretKeyRef) never succeeds -- a gap in the GKE-managed component,
