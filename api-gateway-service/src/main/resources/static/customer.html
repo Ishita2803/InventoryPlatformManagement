@@ -8,139 +8,143 @@
 </head>
 <body>
 
-<header>
-  <div class="brand">
-    <div class="logo">I</div>
-    <div>
-      <h1>Impulse Store</h1>
-      <p>Browse the catalog, add to cart, and check out.</p>
+<div class="sidebar-overlay"></div>
+<div class="app-shell">
+
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="logo">I</div>
+      <div><div class="name">Impulse Store</div><div class="tagline">Customer</div></div>
     </div>
-  </div>
-  <div>
-    <nav><a href="admin.html">Admin</a><a href="vendor.html">Vendor</a><a href="carrier.html">Carrier</a></nav>
-    <div id="whoami" class="whoami"></div>
-  </div>
-</header>
-
-<main>
-
-  <section id="loginPanel" class="login-panel">
-    <h2>Sign in</h2>
-    <div class="row">
-      <div class="field"><label>Username</label><input id="loginUser" value="customer-demo"></div>
-      <div class="field"><label>Password</label><input id="loginPass" type="password" value="customer-demo-pass"></div>
-      <button onclick="login()">Sign in</button>
+    <nav class="side-nav">
+      <button class="side-link active" data-section="shop" data-title="Shop" onclick="nav('shop')"><span class="icon">🛍️</span>Shop</button>
+      <button class="side-link" data-section="cart" data-title="Cart" onclick="nav('cart')"><span class="icon">🛒</span>Cart<span class="count" id="cartCountBadge" style="display:none;"></span></button>
+      <button class="side-link" data-section="orders" data-title="My Orders" onclick="nav('orders')"><span class="icon">📜</span>My Orders</button>
+    </nav>
+    <div class="sidebar-footer">
+      <div class="user-chip">
+        <div class="avatar" id="avatarInitials">C</div>
+        <div class="who"><div class="user-name" id="whoamiName"></div><div class="user-role" id="whoamiRole"></div></div>
+      </div>
+      <button class="secondary full" onclick="doLogout()">Sign out</button>
     </div>
-    <div id="loginMsg" class="msg"></div>
-    <p class="sub">New here? An admin sets up customer accounts from <a href="admin.html">admin.html</a>.</p>
-  </section>
+  </aside>
 
-  <div class="gate">
-    <div class="tabs">
-      <button class="tab-btn active" onclick="showTab('shop')">Shop</button>
-      <button class="tab-btn" onclick="showTab('cart')">Cart <span id="cartCountBadge"></span></button>
-      <button class="tab-btn" onclick="showTab('orders')">My Orders</button>
-    </div>
+  <div class="main">
+    <header class="topbar">
+      <button class="hamburger" onclick="toggleSidebar()">☰</button>
+      <h1 id="pageTitle">Shop</h1>
+    </header>
 
-    <div id="tab-shop" class="tab-panel active" style="display:grid; gap:24px;">
-      <section>
-        <h2>Catalog</h2>
-        <p class="sub">Pick a quantity and add items to your cart. Your cart is saved -- it survives closing this tab.</p>
-        <div id="catalogMsg" class="msg"></div>
-        <div id="catalogGrid" class="product-grid"></div>
-      </section>
-    </div>
+    <main class="content">
 
-    <div id="tab-cart" class="tab-panel" style="display:none; gap:24px;">
+      <div id="section-shop" class="content-section active">
+        <section>
+          <h2>Catalog</h2>
+          <p class="sub">Pick a quantity and add items to your cart. Your cart is saved -- it survives closing this tab.</p>
+          <div id="catalogMsg" class="msg"></div>
+          <div id="catalogGrid" class="product-grid"></div>
+        </section>
+      </div>
 
-      <section>
-        <h2>Your cart</h2>
-        <div id="cartLines" class="cart-panel"></div>
-        <div class="cart-total"><span>Subtotal</span><span id="cartTotal">$0.00</span></div>
-      </section>
+      <div id="section-cart" class="content-section">
+        <section>
+          <h2>Your cart</h2>
+          <div id="cartLines" class="cart-panel"></div>
+          <div class="cart-total"><span>Subtotal</span><span id="cartTotal">$0.00</span></div>
+        </section>
 
-      <section id="checkoutSection">
-        <h2>Checkout</h2>
-        <div class="row">
-          <div class="field">
-            <label>Delivery method</label>
-            <select id="deliveryMethod" onchange="onDeliveryMethodChange()">
-              <option value="standard">Standard delivery (from a warehouse)</option>
-              <option value="direct">Direct from vendor (no warehouse)</option>
-            </select>
+        <section id="checkoutSection">
+          <h2>Checkout</h2>
+          <div class="row">
+            <div class="field">
+              <label>Delivery method</label>
+              <select id="deliveryMethod" onchange="onDeliveryMethodChange()">
+                <option value="standard">Standard delivery (from a warehouse)</option>
+                <option value="direct">Direct from vendor (no warehouse)</option>
+              </select>
+            </div>
+            <div class="field" id="regionField">
+              <label>Delivery region</label>
+              <select id="regionSelect"></select>
+            </div>
+            <div class="field">
+              <label>Shipping method</label>
+              <select id="carrierSelect"></select>
+            </div>
           </div>
-          <div class="field" id="regionField">
-            <label>Delivery region</label>
-            <select id="regionSelect"></select>
+
+          <h3 style="margin-top:16px;">Order summary</h3>
+          <div id="orderSummary" class="stat-grid"></div>
+
+          <div class="row" style="margin-top:16px;">
+            <button onclick="checkout()">Place order</button>
           </div>
-          <div class="field">
-            <label>Shipping method</label>
-            <select id="carrierSelect"></select>
+          <div id="checkoutMsg" class="msg"></div>
+        </section>
+
+        <section id="confirmationSection" style="display:none;">
+          <h2>Order confirmed</h2>
+          <div id="confirmationBody"></div>
+        </section>
+      </div>
+
+      <div id="section-orders" class="content-section">
+        <section>
+          <h2>My orders</h2>
+          <div class="row"><button class="secondary" onclick="loadMyOrders()">Refresh</button></div>
+          <div id="myOrdersMsg" class="msg"></div>
+          <div id="myOrders"></div>
+        </section>
+
+        <section>
+          <h2>Check any order's status</h2>
+          <div class="row">
+            <div class="field" style="width:340px;"><label>Order ID</label><input id="lookupOrderId" style="width:100%" placeholder="paste an orderId"></div>
+            <button class="secondary" onclick="lookupOrder()">Check status</button>
           </div>
-        </div>
+          <div id="lookupMsg" class="msg"></div>
+          <div id="lookupResult"></div>
+        </section>
 
-        <h3 style="margin-top:16px;">Order summary</h3>
-        <div id="orderSummary" class="stat-grid"></div>
+        <section id="invoiceSection" style="display:none;">
+          <h2>Invoice / billing</h2>
+          <div id="invoiceMsg" class="msg"></div>
+          <div id="invoiceBody"></div>
+        </section>
+      </div>
 
-        <div class="row" style="margin-top:16px;">
-          <button onclick="checkout()">Place order</button>
-        </div>
-        <div id="checkoutMsg" class="msg"></div>
-      </section>
+    </main>
 
-      <section id="confirmationSection" style="display:none;">
-        <h2>Order confirmed</h2>
-        <div id="confirmationBody"></div>
-      </section>
-
-    </div>
-
-    <div id="tab-orders" class="tab-panel" style="display:none; gap:24px;">
-      <section>
-        <h2>My orders</h2>
-        <div class="row"><button class="secondary" onclick="loadMyOrders()">Refresh</button></div>
-        <div id="myOrdersMsg" class="msg"></div>
-        <div id="myOrders"></div>
-      </section>
-
-      <section>
-        <h2>Check any order's status</h2>
-        <div class="row">
-          <div class="field" style="width:340px;"><label>Order ID</label><input id="lookupOrderId" style="width:100%" placeholder="paste an orderId"></div>
-          <button class="secondary" onclick="lookupOrder()">Check status</button>
-        </div>
-        <div id="lookupMsg" class="msg"></div>
-        <div id="lookupResult"></div>
-      </section>
-
-      <section id="invoiceSection" style="display:none;">
-        <h2>Invoice / billing</h2>
-        <div id="invoiceMsg" class="msg"></div>
-        <div id="invoiceBody"></div>
-      </section>
-    </div>
-
+    <details class="devlog">
+      <summary>Developer log (raw API requests/responses)</summary>
+      <pre id="log">Nothing sent yet.</pre>
+    </details>
   </div>
-
-  <details class="devlog">
-    <summary>Developer log (raw API requests/responses)</summary>
-    <pre id="log">Nothing sent yet.</pre>
-  </details>
-
-</main>
+</div>
 
 <script src="common.js"></script>
 <script>
-  requireFreshLogin();
+  requireRole('CUSTOMER');
+  initShell();
+
   let catalog = [];
   let cart = {}; // skuNumber -> { item, quantity }
 
+  /** Wraps the shared showSection() with this page's own per-section side effects --
+   * refreshing the cart view and hiding a stale invoice panel -- the same special
+   * cases the old top-tab version handled inline. */
+  function nav(name) {
+    showSection(name);
+    if (name === 'orders') { document.getElementById('invoiceSection').style.display = 'none'; }
+    if (name === 'cart') { renderCart(); }
+  }
+
   // --- Cart persistence -----------------------------------------------------------
-  // sessionStorage (the auth token's home) is wiped by requireFreshLogin() on every
-  // reload, so a cart stored there would vanish on refresh -- exactly the "demo-like"
-  // problem this phase exists to fix. localStorage survives a reload; it's scoped by
-  // the logged-in customer's own businessId so two different customer logins on the
-  // same browser never see each other's cart, and it's cleared on logout/checkout.
+  // The JWT lives in sessionStorage and is gone the moment the tab closes. The cart
+  // deliberately lives in localStorage instead, scoped by the logged-in customer's own
+  // businessId, so it survives a reload and two different customer logins on the same
+  // browser never see each other's cart. Cleared on logout/checkout.
   function cartStorageKey() {
     return 'impulse_cart_' + getBusinessId();
   }
@@ -161,28 +165,12 @@
     cart = {};
   }
 
-  async function login() {
-    if (await doLogin('CUSTOMER', 'loginUser', 'loginPass', 'loginMsg')) {
-      showGate();
-      loadCartFromStorage();
-      loadCatalog();
-      loadRegions();
-      loadCarriers();
-      renderCart();
-      loadMyOrders();
-    }
-  }
-
-  function showTab(name) {
-    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-    document.querySelectorAll('.tab-panel').forEach(p => { p.classList.remove('active'); p.style.display = 'none'; });
-    document.querySelector(`.tab-btn[onclick="showTab('${name}')"]`).classList.add('active');
-    const panel = document.getElementById('tab-' + name);
-    panel.classList.add('active');
-    panel.style.display = 'grid';
-    if (name === 'orders') { document.getElementById('invoiceSection').style.display = 'none'; }
-    if (name === 'cart') { renderCart(); }
-  }
+  loadCartFromStorage();
+  loadCatalog();
+  loadRegions();
+  loadCarriers();
+  renderCart();
+  loadMyOrders();
 
   async function loadCatalog() {
     const el = document.getElementById('catalogMsg');
@@ -244,7 +232,8 @@
     const entries = cartEntries();
     const badge = document.getElementById('cartCountBadge');
     const count = entries.reduce((s, { quantity }) => s + quantity, 0);
-    badge.textContent = count ? `(${count})` : '';
+    badge.textContent = count || '';
+    badge.style.display = count ? 'inline-block' : 'none';
 
     if (!entries.length) {
       lines.innerHTML = '<div class="cart-empty">Your cart is empty.</div>';
@@ -333,7 +322,7 @@
           : `All ${shipped} unit(s) shipping now.`}</p>
         <div class="row">
           <button class="secondary" onclick="viewInvoiceForOrder('${order.orderId}')">View invoice</button>
-          <button class="secondary" onclick="showTab('orders')">Go to My Orders</button>
+          <button class="secondary" onclick="nav('orders')">Go to My Orders</button>
         </div>`;
 
       clearCartStorage();
@@ -401,7 +390,7 @@
   // --- Billing / invoice screen. -----------------------------------------------------
 
   async function viewInvoiceForOrder(orderId) {
-    showTab('orders');
+    nav('orders');
     const section = document.getElementById('invoiceSection');
     const msg = document.getElementById('invoiceMsg');
     const body = document.getElementById('invoiceBody');

@@ -337,6 +337,7 @@ and always serves the tip of `master`.
 | Secrets on GKE | **Secret Manager via CSI driver → env vars** | Framework-version-independent. `spring-cloud-gcp-starter-secretmanager` would be more elegant but has **no confirmed Spring Boot 4.1 release** — do not assume one exists. |
 | Public access | Static IP + HTTP first; TLS optional | A GCLB forwarding rule is roughly $18/mo, more than both VMs. Start cheap, document the upgrade. |
 | GKE shape | Zonal cluster, 2 × `e2-medium` **Spot** | Cost. The cluster management fee is covered by the GKE free-tier credit; Spot nodes cut node cost by ~70 % in exchange for preemption. |
+| Frontend session persistence | Session survives a reload within the tab; cleared only by sign-out, JWT expiry, or a 401 | Changed 2026-09-11. D10's `requireFreshLogin()` wiped `sessionStorage` on every page load, forcing a fresh login on every reload — correct for four independent demo pages, wrong for a unified "sign in once, land on your portal" flow. Retired in favor of `requireRole()` gating plus a global 401 handler. Security posture unchanged: still `sessionStorage` (dies with the tab), still bounded by `jwt.expiry-seconds` (3600s). |
 
 ---
 
@@ -640,6 +641,42 @@ A 200 with **empty** `propertySources` means the filename doesn't match
 ## 10. Change log
 
 Newest first. Add an entry for every meaningful change.
+
+### 2026-09-11 — Post-D11: unified login and a real sidebar-portal shell for all four roles
+- **New `login.html`**: the single entry point for all four roles. `POST /auth/login`,
+  then redirects by the response's own `role` to `admin.html` / `vendor.html` /
+  `customer.html` / `carrier.html` via a `ROLE_HOME` map in `common.js` — the role in
+  the verified JWT decides the destination, never a page the visitor happened to open.
+  Quick-demo-login buttons for the four seeded accounts keep the "demo needs nothing
+  typed" property Phase 20 established. A visitor with a live session who opens
+  `login.html` directly is bounced straight to their portal instead of re-prompted.
+- **All four portal pages rebuilt around a shared sidebar/topbar app-shell**
+  (`.app-shell`/`.sidebar`/`.side-nav`/`.topbar`/`.content-section` in `common.css`,
+  `showSection()` in `common.js`) replacing each page's own top-tab bar. Still a
+  no-build-step static page served by `api-gateway-service` itself — the Phase 20/D10
+  decision to keep this frontend framework-free was deliberately kept, not revisited.
+  Every element id, API call, and piece of business logic is unchanged; only the
+  navigation chrome and layout moved. Responsive: the sidebar collapses to a hamburger
+  drawer under 900px.
+- **Each page's own login form is gone.** `requireRole(expectedRole)` (new, in
+  `common.js`) is the actual "role-restricted page" gate: called at the top of every
+  portal page's script, before it touches the DOM or fires a request — no token, or a
+  token for a different role, redirects to `login.html`.
+- **Locked decision changed, recorded in §7**: session persistence. Retired D10's
+  `requireFreshLogin()` (wiped `sessionStorage` on every page load). `api()` now also
+  catches a 401 globally and treats it as a sign-out, so an expired or disabled-account
+  token bounces to `login.html` instead of leaving a portal silently broken.
+- **Verified in-browser, not against a live backend.** Docker Desktop was unreachable
+  this session and `auth-service` still isn't wired into local Compose (both
+  pre-existing, already-documented gaps — see the 2026-09-02/03 D1 entry below).
+  Verification served the static directory alone (`python -m http.server`, via a
+  throwaway `.claude/launch.json` removed afterward) and drove it with a real browser:
+  confirmed the unauthenticated-redirect gate, the login form's error handling, the
+  login→role→portal redirect (with a mocked successful `/auth/login` response), sidebar
+  section-switching on both desktop and the mobile drawer, and the cart's add/remove/
+  badge logic. **Not verified**: an actual `/auth/login` round trip or any other real
+  API call against a running backend. See `plan.md`'s entry for this change for the
+  full, honest exit statement.
 
 ### 2026-09-04 — Post-D11: user management, real order history, a billing screen
 - **`auth-service`**: `Credential.enabled` (default `true`), checked at login with the

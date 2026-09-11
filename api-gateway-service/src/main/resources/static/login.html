@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sign in — Impulse</title>
+<link rel="stylesheet" href="common.css">
+</head>
+<body>
+
+<div class="login-screen">
+  <div class="login-card">
+    <div class="brand">
+      <div class="logo">I</div>
+    </div>
+    <h1>Sign in to Impulse</h1>
+    <p class="sub">One login, routed to your own portal — admin, vendor, customer, or carrier.</p>
+
+    <form class="login-form" id="loginForm" onsubmit="return handleLogin(event)">
+      <div class="field">
+        <label>Username</label>
+        <input id="loginUser" autocomplete="username" required>
+      </div>
+      <div class="field">
+        <label>Password</label>
+        <input id="loginPass" type="password" autocomplete="current-password" required>
+      </div>
+      <button type="submit" id="loginBtn">Sign in</button>
+      <div id="loginMsg" class="msg"></div>
+    </form>
+
+    <div class="quick-logins">
+      <div class="label">Quick demo logins</div>
+      <button class="quick-login-btn" onclick="quickLogin('admin', 'admin-demo-pass')">
+        <span class="icon">🛠️</span>
+        <span><span class="role">Admin</span><span class="user">admin</span></span>
+      </button>
+      <button class="quick-login-btn" onclick="quickLogin('vendor-demo', 'vendor-demo-pass')">
+        <span class="icon">🏭</span>
+        <span><span class="role">Vendor</span><span class="user">vendor-demo</span></span>
+      </button>
+      <button class="quick-login-btn" onclick="quickLogin('customer-demo', 'customer-demo-pass')">
+        <span class="icon">🛍️</span>
+        <span><span class="role">Customer</span><span class="user">customer-demo</span></span>
+      </button>
+      <button class="quick-login-btn" onclick="quickLogin('carrier-demo', 'carrier-demo-pass')">
+        <span class="icon">🚚</span>
+        <span><span class="role">Carrier</span><span class="user">carrier-demo</span></span>
+      </button>
+    </div>
+
+    <div class="login-footer">New partner? An admin onboards vendor, customer, and carrier accounts from the Admin Console.</div>
+  </div>
+</div>
+
+<script src="common.js"></script>
+<script>
+  // Already signed in with a live session? Skip the form and go straight to that
+  // role's portal instead of making a valid session re-authenticate.
+  (function redirectIfAlreadySignedIn() {
+    const role = getRole();
+    const token = getToken();
+    if (token && role && ROLE_HOME[role]) location.href = ROLE_HOME[role];
+  })();
+
+  function quickLogin(username, password) {
+    document.getElementById('loginUser').value = username;
+    document.getElementById('loginPass').value = password;
+    document.getElementById('loginForm').requestSubmit();
+  }
+
+  async function handleLogin(event) {
+    event.preventDefault();
+    const msg = document.getElementById('loginMsg');
+    const btn = document.getElementById('loginBtn');
+    const username = document.getElementById('loginUser').value.trim();
+    const password = document.getElementById('loginPass').value;
+
+    msg.className = 'msg'; msg.textContent = 'Signing in…';
+    btn.disabled = true;
+    try {
+      const result = await api('POST', '/auth/login', { username, password });
+      const home = ROLE_HOME[result.role];
+      if (!home) {
+        msg.className = 'msg error'; msg.textContent = `Unknown role "${result.role}" — no portal for it.`;
+        btn.disabled = false;
+        return false;
+      }
+      saveSession(result.token, result.role, result.businessId);
+      msg.className = 'msg ok'; msg.textContent = 'Signed in — redirecting…';
+      location.href = home;
+    } catch (e) {
+      msg.className = 'msg error';
+      msg.textContent = e.status === 401
+        ? 'Incorrect username or password.'
+        : 'Sign in failed: ' + (e.body && e.body.message ? e.body.message : e.status || e);
+      btn.disabled = false;
+    }
+    return false;
+  }
+</script>
+
+</body>
+</html>

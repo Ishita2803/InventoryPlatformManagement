@@ -46,9 +46,13 @@ big, but because each is a genuinely distinct actor with its own login and lifec
 merging them to save a pod would couple three unrelated bounded contexts.
 
 **The storefront and admin console are real screens over real APIs, not a demo shell.**
+One login page (`login.html`) routes every role to its own portal — admin, vendor,
+customer, carrier — each a sidebar-driven app shell, not four copies of a login form.
 `customer.html`'s cart persists in `localStorage` (scoped per logged-in customer, cleared
 on checkout) so it survives a reload — unlike the JWT, which still lives in
-`sessionStorage` and is deliberately wiped every page load. "My Orders" calls a new,
+`sessionStorage` and is scoped to the tab (a reload no longer forces a fresh login the
+way it did before this rebuild; a sign-out, an expired token, or a 401 still ends the
+session). "My Orders" calls a new,
 gateway-gated `GET /api/orders/mine` scoped server-side by the caller's own business id
 (not a client-supplied filter), and a billing screen renders a real invoice fetched from
 a new `GET /api/payments/invoices/{orderId}` — the first time a generated invoice is
@@ -758,6 +762,12 @@ answer than not having noticed.
   `inventory-service` demo endpoints. The Part D catalog (`CatalogItem.salePrice`, set
   admin-side in `inventory-service`) fixes this for the Impulse domain, but the older
   endpoints still take price from the request — say which API you mean if asked.
+- **The unified login and sidebar portal shell (2026-09-11) was verified in-browser
+  against the static files alone, not against a running backend.** Docker Desktop was
+  unreachable in that session, so the login→role→portal redirect, the role-restricted
+  page gate, and the sidebar navigation were confirmed with a mocked API response, not
+  a real `/auth/login` call. Say this plainly if asked whether the new front end has
+  been exercised end-to-end — it hasn't yet, only its UI logic has.
 - **Distributed tracing is real, not just log correlation** — Micrometer Tracing +
   an in-cluster OpenTelemetry Collector export every request's trace to GCP Cloud Trace
   (Phase D1), so a single flow across the gateway, Kafka, and every downstream service

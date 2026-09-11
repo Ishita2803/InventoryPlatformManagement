@@ -8,90 +8,92 @@
 </head>
 <body>
 
-<header>
-  <div class="brand">
-    <div class="logo">I</div>
-    <div>
-      <h1>Seller Center</h1>
-      <p>Manage your catalog and track purchase orders from Impulse.</p>
+<div class="sidebar-overlay"></div>
+<div class="app-shell">
+
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="logo">I</div>
+      <div><div class="name">Seller Center</div><div class="tagline">Impulse</div></div>
     </div>
-  </div>
-  <div>
-    <nav><a href="admin.html">Admin</a><a href="customer.html">Store</a><a href="carrier.html">Carrier</a></nav>
-    <div id="whoami" class="whoami"></div>
-  </div>
-</header>
-
-<main>
-
-  <section id="loginPanel" class="login-panel">
-    <h2>Sign in</h2>
-    <div class="row">
-      <div class="field"><label>Username</label><input id="loginUser" value="vendor-demo"></div>
-      <div class="field"><label>Password</label><input id="loginPass" type="password" value="vendor-demo-pass"></div>
-      <button onclick="login()">Sign in</button>
+    <nav class="side-nav">
+      <button class="side-link active" data-section="dashboard" data-title="Dashboard" onclick="showSection('dashboard')"><span class="icon">📊</span>Dashboard</button>
+      <button class="side-link" data-section="products" data-title="Products" onclick="showSection('products')"><span class="icon">📦</span>Products</button>
+      <button class="side-link" data-section="purchase-orders" data-title="Purchase Orders" onclick="showSection('purchase-orders')"><span class="icon">🧾</span>Purchase Orders</button>
+    </nav>
+    <div class="sidebar-footer">
+      <div class="user-chip">
+        <div class="avatar" id="avatarInitials">V</div>
+        <div class="who"><div class="user-name" id="whoamiName"></div><div class="user-role" id="whoamiRole"></div></div>
+      </div>
+      <button class="secondary full" onclick="doLogout()">Sign out</button>
     </div>
-    <div id="loginMsg" class="msg"></div>
-    <p class="sub">An admin sets up vendor accounts from <a href="admin.html">admin.html</a>.</p>
-  </section>
+  </aside>
 
-  <div class="gate" style="display:grid; gap:24px;">
+  <div class="main">
+    <header class="topbar">
+      <button class="hamburger" onclick="toggleSidebar()">☰</button>
+      <h1 id="pageTitle">Dashboard</h1>
+    </header>
 
-    <section>
-      <h2>Overview</h2>
-      <div class="stat-grid">
-        <div class="stat-card"><div class="label">Products listed</div><div class="value" id="statProductCount">—</div></div>
-        <div class="stat-card"><div class="label">Purchase orders received</div><div class="value" id="statPoCount">—</div></div>
-        <div class="stat-card"><div class="label">Fulfilled</div><div class="value ok" id="statPoFulfilled">—</div></div>
+    <main class="content">
+
+      <div id="section-dashboard" class="content-section active">
+        <section>
+          <h2>Overview</h2>
+          <div class="stat-grid">
+            <div class="stat-card"><div class="label">Products listed</div><div class="value" id="statProductCount">—</div></div>
+            <div class="stat-card"><div class="label">Purchase orders received</div><div class="value" id="statPoCount">—</div></div>
+            <div class="stat-card"><div class="label">Fulfilled</div><div class="value ok" id="statPoFulfilled">—</div></div>
+          </div>
+        </section>
       </div>
-    </section>
 
-    <section>
-      <h2>List a new product</h2>
-      <div class="row">
-        <div class="field"><label>Product name</label><input id="pName" value="Widget B"></div>
-        <div class="field"><label>Sku number</label><input id="pSku" value="ACME-WIDGET-B"></div>
-        <div class="field"><label>Description</label><input id="pDesc" value=""></div>
-        <div class="field"><label>Unit weight (kg)</label><input id="pWeight" value="2.000"></div>
-        <div class="field"><label>Your cost price</label><input id="pCost" value="40.00"></div>
-        <button onclick="addProduct()">List product</button>
+      <div id="section-products" class="content-section">
+        <section>
+          <h2>List a new product</h2>
+          <div class="row">
+            <div class="field"><label>Product name</label><input id="pName" value="Widget B"></div>
+            <div class="field"><label>Sku number</label><input id="pSku" value="ACME-WIDGET-B"></div>
+            <div class="field"><label>Description</label><input id="pDesc" value=""></div>
+            <div class="field"><label>Unit weight (kg)</label><input id="pWeight" value="2.000"></div>
+            <div class="field"><label>Your cost price</label><input id="pCost" value="40.00"></div>
+            <button onclick="addProduct()">List product</button>
+          </div>
+          <div id="pMsg" class="msg"></div>
+        </section>
+
+        <section>
+          <h2>Your products</h2>
+          <div id="productMsg" class="msg"></div>
+          <div id="productGrid" class="product-grid"></div>
+        </section>
       </div>
-      <div id="pMsg" class="msg"></div>
-    </section>
 
-    <section>
-      <h2>Your products</h2>
-      <div id="productMsg" class="msg"></div>
-      <div id="productGrid" class="product-grid"></div>
-    </section>
+      <div id="section-purchase-orders" class="content-section">
+        <section>
+          <h2>Purchase orders from Impulse</h2>
+          <p class="sub">Impulse's mock vendor-fulfillment fulfills every order automatically, the moment it's placed.</p>
+          <div id="poMsg" class="msg"></div>
+          <div id="poList"></div>
+        </section>
+      </div>
 
-    <section>
-      <h2>Purchase orders from Impulse</h2>
-      <p class="sub">Impulse's mock vendor-fulfillment fulfills every order automatically, the moment it's placed.</p>
-      <div id="poMsg" class="msg"></div>
-      <div id="poList"></div>
-    </section>
+    </main>
 
+    <details class="devlog">
+      <summary>Developer log (raw API requests/responses)</summary>
+      <pre id="log">Nothing sent yet.</pre>
+    </details>
   </div>
-
-  <details class="devlog">
-    <summary>Developer log (raw API requests/responses)</summary>
-    <pre id="log">Nothing sent yet.</pre>
-  </details>
-
-</main>
+</div>
 
 <script src="common.js"></script>
 <script>
-  requireFreshLogin();
-
-  async function login() {
-    if (await doLogin('VENDOR', 'loginUser', 'loginPass', 'loginMsg')) {
-      showGate();
-      listProducts();
-      listPurchaseOrders();
-    }
-  }
+  requireRole('VENDOR');
+  initShell();
+  listProducts();
+  listPurchaseOrders();
 
   async function addProduct() {
     const el = document.getElementById('pMsg');

@@ -8,257 +8,231 @@
 </head>
 <body>
 
-<header>
-  <div class="brand">
-    <div class="logo">I</div>
-    <div>
-      <h1>Admin Console</h1>
-      <p>Onboard partners, stock the business, and track performance.</p>
+<div class="sidebar-overlay"></div>
+<div class="app-shell">
+
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="logo">I</div>
+      <div><div class="name">Admin Console</div><div class="tagline">Impulse</div></div>
     </div>
-  </div>
-  <div>
-    <div id="whoami" class="whoami"></div>
-  </div>
-</header>
-
-<main>
-
-  <section id="loginPanel" class="login-panel">
-    <h2>Sign in</h2>
-    <div class="row">
-      <div class="field"><label>Username</label><input id="loginUser" value="admin"></div>
-      <div class="field"><label>Password</label><input id="loginPass" type="password" value="admin-demo-pass"></div>
-      <button onclick="login()">Sign in</button>
+    <nav class="side-nav">
+      <button class="side-link active" data-section="dashboard" data-title="Dashboard" onclick="showSection('dashboard')"><span class="icon">📊</span>Dashboard</button>
+      <button class="side-link" data-section="onboarding" data-title="Onboarding" onclick="showSection('onboarding')"><span class="icon">🧩</span>Onboarding</button>
+      <button class="side-link" data-section="purchase-orders" data-title="Purchase Orders" onclick="showSection('purchase-orders')"><span class="icon">📦</span>Purchase Orders</button>
+      <button class="side-link" data-section="directory" data-title="Directory" onclick="showSection('directory')"><span class="icon">🗂️</span>Directory</button>
+      <button class="side-link" data-section="users" data-title="Users" onclick="showSection('users')"><span class="icon">👤</span>Users</button>
+    </nav>
+    <div class="sidebar-footer">
+      <div class="user-chip">
+        <div class="avatar" id="avatarInitials">A</div>
+        <div class="who"><div class="user-name" id="whoamiName"></div><div class="user-role" id="whoamiRole"></div></div>
+      </div>
+      <button class="secondary full" onclick="doLogout()">Sign out</button>
     </div>
-    <div id="loginMsg" class="msg"></div>
-  </section>
+  </aside>
 
-  <div class="gate">
-    <div class="tabs">
-      <button class="tab-btn active" onclick="showTab('dashboard')">Dashboard</button>
-      <button class="tab-btn" onclick="showTab('onboarding')">Onboarding</button>
-      <button class="tab-btn" onclick="showTab('stock')">Purchase Orders</button>
-      <button class="tab-btn" onclick="showTab('directory')">Directory</button>
-      <button class="tab-btn" onclick="showTab('users')">Users</button>
-    </div>
+  <div class="main">
+    <header class="topbar">
+      <button class="hamburger" onclick="toggleSidebar()">☰</button>
+      <h1 id="pageTitle">Dashboard</h1>
+    </header>
 
-    <div id="tab-dashboard" class="tab-panel active" style="display:grid; gap:24px;">
+    <main class="content">
 
-      <section>
-        <h2>Profit <small>today's prices &times; all-time quantity sold</small></h2>
-        <div class="row"><button class="secondary" onclick="loadProfitReport()">Refresh</button></div>
-        <div class="stat-grid" style="margin-bottom:16px;">
-          <div class="stat-card"><div class="label">Total profit</div><div class="value ok" id="profitTotal">—</div></div>
-          <div class="stat-card"><div class="label">Skus sold</div><div class="value" id="profitSkuCount">—</div></div>
-        </div>
-        <div id="profitMsg" class="msg"></div>
-        <table id="profitTable" style="display:none;">
-          <thead><tr><th>Sku</th><th>Qty sold</th><th>Sale price</th><th>Cost price</th><th>Profit/unit</th><th>Total profit</th></tr></thead>
-          <tbody id="profitTableBody"></tbody>
-        </table>
-      </section>
-
-    </div>
-
-    <div id="tab-onboarding" class="tab-panel" style="display:none; gap:24px;">
-
-      <section>
-        <h2>Onboard a vendor</h2>
-        <div class="row">
-          <div class="field"><label>Name</label><input id="vName" value="Acme Supplies"></div>
-          <div class="field"><label>Username</label><input id="vUser" value="acme-vendor"></div>
-          <div class="field"><label>Password</label><input id="vPass" value="vendorpass1"></div>
-          <button onclick="onboardVendor()">Onboard vendor</button>
-        </div>
-        <div id="vMsg" class="msg"></div>
-      </section>
-
-      <section>
-        <h2>Onboard a customer</h2>
-        <div class="row">
-          <div class="field"><label>Name</label><input id="cName" value="Vijay Sales"></div>
-          <div class="field"><label>Email</label><input id="cEmail" value="vijay@example.com"></div>
-          <div class="field"><label>Username</label><input id="cUser" value="vijay-customer"></div>
-          <div class="field"><label>Password</label><input id="cPass" value="customerpass1"></div>
-        </div>
-        <div class="row">
-          <div class="field"><label>Billing line</label><input id="cBillLine" value="1 MG Road"></div>
-          <div class="field"><label>Billing city</label><input id="cBillCity" value="Mumbai"></div>
-          <div class="field"><label>Billing region</label><input id="cBillRegion" value="MUMBAI"></div>
-        </div>
-        <div class="row">
-          <div class="field"><label>Shipping line</label><input id="cShipLine" value="1 MG Road"></div>
-          <div class="field"><label>Shipping city</label><input id="cShipCity" value="Mumbai"></div>
-          <div class="field"><label>Shipping region</label><input id="cShipRegion" value="MUMBAI"></div>
-          <button onclick="onboardCustomer()">Onboard customer</button>
-        </div>
-        <div id="cMsg" class="msg"></div>
-      </section>
-
-      <section>
-        <h2>Onboard a carrier</h2>
-        <div class="row">
-          <div class="field"><label>Carrier code</label><input id="carCode" value="DTDC"></div>
-          <div class="field"><label>Carrier name</label><input id="carName" value="DTDC Express"></div>
-          <div class="field"><label>Username</label><input id="carUser" value="dtdc-carrier"></div>
-          <div class="field"><label>Password</label><input id="carPass" value="carrierpass1"></div>
-          <button onclick="onboardCarrier()">Onboard carrier</button>
-        </div>
-        <div id="carMsg" class="msg"></div>
-      </section>
-
-      <section>
-        <h2>Register a warehouse</h2>
-        <div class="row">
-          <div class="field"><label>Warehouse ID</label><input id="whId" value="WH-PUNE"></div>
-          <div class="field"><label>Location</label><input id="whLocation" value="Pune Logistics Park"></div>
-          <div class="field"><label>Region</label><input id="whRegion" value="PUNE"></div>
-          <button onclick="registerWarehouse()">Register warehouse</button>
-        </div>
-        <div id="whMsg" class="msg"></div>
-      </section>
-
-    </div>
-
-    <div id="tab-stock" class="tab-panel" style="display:none; gap:24px;">
-
-      <section>
-        <h2>Price a sku for sale</h2>
-        <p class="sub">Fetches the vendor's real weight automatically; the store only shows priced skus.</p>
-        <div class="row">
-          <div class="field"><label>Sku number</label><input id="priceSku" value="ACME-WIDGET-A"></div>
-          <div class="field"><label>Sale price</label><input id="priceAmount" value="75.00"></div>
-          <button onclick="setSalePrice()">Set sale price</button>
-        </div>
-        <div id="priceMsg" class="msg"></div>
-      </section>
-
-      <section>
-        <h2>Place a stocking order <small>restock a warehouse from the vendor</small></h2>
-        <div class="row">
-          <div class="field"><label>Sku number</label><input id="poSku" value="ACME-WIDGET-A"></div>
-          <div class="field"><label>Quantity</label><input id="poQty" value="20" type="number"></div>
-          <div class="field"><label>Warehouse ID</label><input id="poWarehouse" value="WH-MUMBAI"></div>
-          <button onclick="placePurchaseOrder()">Place purchase order</button>
-        </div>
-        <div id="poMsg" class="msg"></div>
-      </section>
-
-      <section>
-        <h2>Purchase order history</h2>
-        <div class="row"><button class="secondary" onclick="listPurchaseOrders()">Refresh</button></div>
-        <div id="poList"></div>
-      </section>
-
-    </div>
-
-    <div id="tab-directory" class="tab-panel" style="display:none; gap:24px;">
-
-      <section>
-        <h2>Vendors <small id="vendorCount"></small></h2>
-        <div class="row"><button class="secondary" onclick="loadVendorDirectory()">Refresh</button></div>
-        <div id="vendorDirectoryMsg" class="msg"></div>
-        <div id="vendorDirectory"></div>
-      </section>
-
-      <section>
-        <h2>Customers <small id="customerCount"></small></h2>
-        <div class="row"><button class="secondary" onclick="loadCustomerDirectory()">Refresh</button></div>
-        <div id="customerDirectoryMsg" class="msg"></div>
-        <div id="customerDirectory"></div>
-      </section>
-
-      <section>
-        <h2>Carriers <small id="carrierCount"></small></h2>
-        <div class="row"><button class="secondary" onclick="loadCarrierDirectory()">Refresh</button></div>
-        <div id="carrierDirectoryMsg" class="msg"></div>
-        <div id="carrierDirectory"></div>
-      </section>
-
-    </div>
-
-    <div id="tab-users" class="tab-panel" style="display:none; gap:24px;">
-
-      <section>
-        <h2>Users <small id="userCount"></small></h2>
-        <p class="sub">Every login this platform knows about. Editing role/business id or disabling a user takes effect immediately -- a disabled user is rejected at their next login attempt, the same way a wrong password is.</p>
-        <div class="row"><button class="secondary" onclick="loadUsers()">Refresh</button></div>
-        <div id="usersMsg" class="msg"></div>
-        <table id="usersTable" style="display:none;">
-          <thead><tr><th>Username</th><th>Role</th><th>Business ID</th><th>Enabled</th><th></th></tr></thead>
-          <tbody id="usersTableBody"></tbody>
-        </table>
-      </section>
-
-      <section id="editUserSection" style="display:none;">
-        <h2>Edit user <span id="editUserUsername"></span></h2>
-        <div class="row">
-          <div class="field">
-            <label>Role</label>
-            <select id="editUserRole">
-              <option value="ADMIN">ADMIN</option>
-              <option value="VENDOR">VENDOR</option>
-              <option value="CUSTOMER">CUSTOMER</option>
-              <option value="CARRIER">CARRIER</option>
-            </select>
+      <div id="section-dashboard" class="content-section active">
+        <section>
+          <h2>Profit <small>today's prices &times; all-time quantity sold</small></h2>
+          <div class="row"><button class="secondary" onclick="loadProfitReport()">Refresh</button></div>
+          <div class="stat-grid" style="margin-bottom:16px;">
+            <div class="stat-card"><div class="label">Total profit</div><div class="value ok" id="profitTotal">—</div></div>
+            <div class="stat-card"><div class="label">Skus sold</div><div class="value" id="profitSkuCount">—</div></div>
           </div>
-          <div class="field"><label>Business ID</label><input id="editUserBusinessId"></div>
-          <div class="field">
-            <label>Enabled</label>
-            <select id="editUserEnabled"><option value="true">Yes</option><option value="false">No</option></select>
+          <div id="profitMsg" class="msg"></div>
+          <table id="profitTable" style="display:none;">
+            <thead><tr><th>Sku</th><th>Qty sold</th><th>Sale price</th><th>Cost price</th><th>Profit/unit</th><th>Total profit</th></tr></thead>
+            <tbody id="profitTableBody"></tbody>
+          </table>
+        </section>
+      </div>
+
+      <div id="section-onboarding" class="content-section">
+        <section>
+          <h2>Onboard a vendor</h2>
+          <div class="row">
+            <div class="field"><label>Name</label><input id="vName" value="Acme Supplies"></div>
+            <div class="field"><label>Username</label><input id="vUser" value="acme-vendor"></div>
+            <div class="field"><label>Password</label><input id="vPass" value="vendorpass1"></div>
+            <button onclick="onboardVendor()">Onboard vendor</button>
           </div>
-          <button onclick="saveUserEdit()">Save changes</button>
-          <button class="secondary" onclick="closeUserEdit()">Cancel</button>
-        </div>
-        <div id="editUserMsg" class="msg"></div>
-      </section>
+          <div id="vMsg" class="msg"></div>
+        </section>
 
-      <section id="setPasswordSection" style="display:none;">
-        <h2>Set password for <span id="setPasswordUsername"></span></h2>
-        <div class="row">
-          <div class="field"><label>New password</label><input id="setPasswordNew" type="password"></div>
-          <div class="field"><label>Confirm password</label><input id="setPasswordConfirm" type="password"></div>
-          <button onclick="saveNewPassword()">Set password</button>
-          <button class="secondary" onclick="closeSetPassword()">Cancel</button>
-        </div>
-        <div id="setPasswordMsg" class="msg"></div>
-      </section>
+        <section>
+          <h2>Onboard a customer</h2>
+          <div class="row">
+            <div class="field"><label>Name</label><input id="cName" value="Vijay Sales"></div>
+            <div class="field"><label>Email</label><input id="cEmail" value="vijay@example.com"></div>
+            <div class="field"><label>Username</label><input id="cUser" value="vijay-customer"></div>
+            <div class="field"><label>Password</label><input id="cPass" value="customerpass1"></div>
+          </div>
+          <div class="row">
+            <div class="field"><label>Billing line</label><input id="cBillLine" value="1 MG Road"></div>
+            <div class="field"><label>Billing city</label><input id="cBillCity" value="Mumbai"></div>
+            <div class="field"><label>Billing region</label><input id="cBillRegion" value="MUMBAI"></div>
+          </div>
+          <div class="row">
+            <div class="field"><label>Shipping line</label><input id="cShipLine" value="1 MG Road"></div>
+            <div class="field"><label>Shipping city</label><input id="cShipCity" value="Mumbai"></div>
+            <div class="field"><label>Shipping region</label><input id="cShipRegion" value="MUMBAI"></div>
+            <button onclick="onboardCustomer()">Onboard customer</button>
+          </div>
+          <div id="cMsg" class="msg"></div>
+        </section>
 
-    </div>
+        <section>
+          <h2>Onboard a carrier</h2>
+          <div class="row">
+            <div class="field"><label>Carrier code</label><input id="carCode" value="DTDC"></div>
+            <div class="field"><label>Carrier name</label><input id="carName" value="DTDC Express"></div>
+            <div class="field"><label>Username</label><input id="carUser" value="dtdc-carrier"></div>
+            <div class="field"><label>Password</label><input id="carPass" value="carrierpass1"></div>
+            <button onclick="onboardCarrier()">Onboard carrier</button>
+          </div>
+          <div id="carMsg" class="msg"></div>
+        </section>
 
+        <section>
+          <h2>Register a warehouse</h2>
+          <div class="row">
+            <div class="field"><label>Warehouse ID</label><input id="whId" value="WH-PUNE"></div>
+            <div class="field"><label>Location</label><input id="whLocation" value="Pune Logistics Park"></div>
+            <div class="field"><label>Region</label><input id="whRegion" value="PUNE"></div>
+            <button onclick="registerWarehouse()">Register warehouse</button>
+          </div>
+          <div id="whMsg" class="msg"></div>
+        </section>
+      </div>
+
+      <div id="section-purchase-orders" class="content-section">
+        <section>
+          <h2>Price a sku for sale</h2>
+          <p class="sub">Fetches the vendor's real weight automatically; the store only shows priced skus.</p>
+          <div class="row">
+            <div class="field"><label>Sku number</label><input id="priceSku" value="ACME-WIDGET-A"></div>
+            <div class="field"><label>Sale price</label><input id="priceAmount" value="75.00"></div>
+            <button onclick="setSalePrice()">Set sale price</button>
+          </div>
+          <div id="priceMsg" class="msg"></div>
+        </section>
+
+        <section>
+          <h2>Place a stocking order <small>restock a warehouse from the vendor</small></h2>
+          <div class="row">
+            <div class="field"><label>Sku number</label><input id="poSku" value="ACME-WIDGET-A"></div>
+            <div class="field"><label>Quantity</label><input id="poQty" value="20" type="number"></div>
+            <div class="field"><label>Warehouse ID</label><input id="poWarehouse" value="WH-MUMBAI"></div>
+            <button onclick="placePurchaseOrder()">Place purchase order</button>
+          </div>
+          <div id="poMsg" class="msg"></div>
+        </section>
+
+        <section>
+          <h2>Purchase order history</h2>
+          <div class="row"><button class="secondary" onclick="listPurchaseOrders()">Refresh</button></div>
+          <div id="poList"></div>
+        </section>
+      </div>
+
+      <div id="section-directory" class="content-section">
+        <section>
+          <h2>Vendors <small id="vendorCount"></small></h2>
+          <div class="row"><button class="secondary" onclick="loadVendorDirectory()">Refresh</button></div>
+          <div id="vendorDirectoryMsg" class="msg"></div>
+          <div id="vendorDirectory"></div>
+        </section>
+
+        <section>
+          <h2>Customers <small id="customerCount"></small></h2>
+          <div class="row"><button class="secondary" onclick="loadCustomerDirectory()">Refresh</button></div>
+          <div id="customerDirectoryMsg" class="msg"></div>
+          <div id="customerDirectory"></div>
+        </section>
+
+        <section>
+          <h2>Carriers <small id="carrierCount"></small></h2>
+          <div class="row"><button class="secondary" onclick="loadCarrierDirectory()">Refresh</button></div>
+          <div id="carrierDirectoryMsg" class="msg"></div>
+          <div id="carrierDirectory"></div>
+        </section>
+      </div>
+
+      <div id="section-users" class="content-section">
+        <section>
+          <h2>Users <small id="userCount"></small></h2>
+          <p class="sub">Every login this platform knows about. Editing role/business id or disabling a user takes effect immediately -- a disabled user is rejected at their next login attempt, the same way a wrong password is.</p>
+          <div class="row"><button class="secondary" onclick="loadUsers()">Refresh</button></div>
+          <div id="usersMsg" class="msg"></div>
+          <table id="usersTable" style="display:none;">
+            <thead><tr><th>Username</th><th>Role</th><th>Business ID</th><th>Enabled</th><th></th></tr></thead>
+            <tbody id="usersTableBody"></tbody>
+          </table>
+        </section>
+
+        <section id="editUserSection" style="display:none;">
+          <h2>Edit user <span id="editUserUsername"></span></h2>
+          <div class="row">
+            <div class="field">
+              <label>Role</label>
+              <select id="editUserRole">
+                <option value="ADMIN">ADMIN</option>
+                <option value="VENDOR">VENDOR</option>
+                <option value="CUSTOMER">CUSTOMER</option>
+                <option value="CARRIER">CARRIER</option>
+              </select>
+            </div>
+            <div class="field"><label>Business ID</label><input id="editUserBusinessId"></div>
+            <div class="field">
+              <label>Enabled</label>
+              <select id="editUserEnabled"><option value="true">Yes</option><option value="false">No</option></select>
+            </div>
+            <button onclick="saveUserEdit()">Save changes</button>
+            <button class="secondary" onclick="closeUserEdit()">Cancel</button>
+          </div>
+          <div id="editUserMsg" class="msg"></div>
+        </section>
+
+        <section id="setPasswordSection" style="display:none;">
+          <h2>Set password for <span id="setPasswordUsername"></span></h2>
+          <div class="row">
+            <div class="field"><label>New password</label><input id="setPasswordNew" type="password"></div>
+            <div class="field"><label>Confirm password</label><input id="setPasswordConfirm" type="password"></div>
+            <button onclick="saveNewPassword()">Set password</button>
+            <button class="secondary" onclick="closeSetPassword()">Cancel</button>
+          </div>
+          <div id="setPasswordMsg" class="msg"></div>
+        </section>
+      </div>
+
+    </main>
+
+    <details class="devlog">
+      <summary>Developer log (raw API requests/responses)</summary>
+      <pre id="log">Nothing sent yet.</pre>
+    </details>
   </div>
-
-  <details class="devlog">
-    <summary>Developer log (raw API requests/responses)</summary>
-    <pre id="log">Nothing sent yet.</pre>
-  </details>
-
-</main>
+</div>
 
 <script src="common.js"></script>
 <script>
-  requireFreshLogin();
-
-  async function login() {
-    if (await doLogin('ADMIN', 'loginUser', 'loginPass', 'loginMsg')) {
-      showGate();
-      loadProfitReport();
-      listPurchaseOrders();
-      loadVendorDirectory();
-      loadCustomerDirectory();
-      loadCarrierDirectory();
-      loadUsers();
-    }
-  }
-
-  function showTab(name) {
-    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-    document.querySelectorAll('.tab-panel').forEach(p => { p.classList.remove('active'); p.style.display = 'none'; });
-    document.querySelector(`.tab-btn[onclick="showTab('${name}')"]`).classList.add('active');
-    const panel = document.getElementById('tab-' + name);
-    panel.classList.add('active');
-    panel.style.display = 'grid';
-  }
+  requireRole('ADMIN');
+  initShell();
+  loadProfitReport();
+  listPurchaseOrders();
+  loadVendorDirectory();
+  loadCustomerDirectory();
+  loadCarrierDirectory();
+  loadUsers();
 
   async function onboardVendor() {
     const el = document.getElementById('vMsg');

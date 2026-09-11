@@ -1473,6 +1473,63 @@ instead, which needed no such access.
 
 ---
 
+## Post-D11 — Unified login and role-based portal shell ✅ *(done 2026-09-11)*
+
+Requested after the user-management phase above: replace four independent, top-tabbed
+pages (each with its own copy of a login form) with a single login entry point and a
+shared sidebar/portal shell, so "admin gets an admin portal, customer gets an order
+portal, vendor and carrier get their own" reads as one real front end rather than four
+demo forms that happen to share a stylesheet.
+
+- [x] New `login.html` — one login form, `POST /auth/login`, redirects by the JWT
+      response's own `role` to `admin.html` / `vendor.html` / `customer.html` /
+      `carrier.html` (a `ROLE_HOME` map in `common.js`). Quick-demo-login buttons for all
+      four seeded accounts, so the platform still demos itself with nothing typed.
+      Already-signed-in visitors skip the form and land straight on their portal.
+- [x] `admin.html` / `vendor.html` / `customer.html` / `carrier.html` rebuilt around a
+      shared sidebar/topbar app-shell (`.app-shell`/`.sidebar`/`.side-nav`/`.topbar` in
+      `common.css`) — still no build step, no framework, still served as static files by
+      `api-gateway-service` itself, keeping the Phase 20 / D10 decision intact. Each
+      page's own top-tab bar becomes sidebar sections (`showSection()` in `common.js`);
+      same content, same element ids, same API calls — only reorganized, nothing
+      functional changed.
+- [x] Each page's own login form removed. `requireRole(expectedRole)` (new, in
+      `common.js`) is the actual gate now: no token, or a token for a different role,
+      redirects to `login.html` before the page renders or fires a single request.
+- [x] **A locked decision changed from the D10 design: session persistence.**
+      `requireFreshLogin()` (D10) deliberately wiped `sessionStorage` on every page load
+      so a reload always re-prompted for credentials — the right call for four
+      independent demo pages, wrong for one "sign in once, land on your portal" flow.
+      Retired. A session now survives a reload within the tab until explicit sign-out,
+      JWT expiry, or a 401 (`api()` now catches a 401 globally and treats it as a
+      sign-out). The token still lives in `sessionStorage`, not `localStorage`, so it
+      never survives closing the tab, and `jwt.expiry-seconds` (3600s) still bounds it —
+      the actual security posture is unchanged, only the "reload = logged out" UX
+      annoyance is gone.
+- [x] Cross-portal nav links removed — a customer page linking to `admin.html` no longer
+      makes sense once visiting it as the wrong role just bounces to `login.html`.
+      Replaced with a sign-out button in the sidebar footer and the login page's own
+      quick-demo-login buttons for switching roles.
+
+**Deliberately unchanged:** every API call, request body, response handling, cart
+`localStorage` scoping, and business rule from the phases above. This is a
+navigation/chrome rebuild, not a functional change.
+
+**Verified, and honestly scoped.** Docker Desktop was unavailable in this session (and
+`auth-service` still isn't wired into local Compose — an existing, already-documented
+gap), so this was verified by serving the static directory alone in a real browser
+(`python -m http.server` via a throwaway `.claude/launch.json`, removed afterward), not
+against a running backend. Confirmed live in-browser: the login form and its
+quick-demo buttons submit and handle a failed request cleanly; visiting a portal page
+with no session redirects to `login.html`; a simulated valid session renders the
+correct portal's sidebar, avatar, and role; sidebar navigation switches sections
+correctly at both desktop width and the sub-900px mobile drawer; the login page's
+role-based redirect lands on the right portal after a mocked successful login; cart
+add/remove logic still produces the correct badge count and subtotal. **Not verified
+this session:** an actual `/auth/login` round trip or any other real API call against a
+running backend — that needs the full stack (Docker Desktop, or GKE), neither available
+here.
+
 ## Resume discipline
 
 Claim a capability **only after it is implemented and tested.** Interviewers ask about

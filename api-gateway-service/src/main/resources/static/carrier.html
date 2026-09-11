@@ -8,84 +8,86 @@
 </head>
 <body>
 
-<header>
-  <div class="brand">
-    <div class="logo">I</div>
-    <div>
-      <h1>Carrier Portal</h1>
-      <p>Set your shipping rates and see the shipments assigned to you.</p>
+<div class="sidebar-overlay"></div>
+<div class="app-shell">
+
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="logo">I</div>
+      <div><div class="name">Carrier Portal</div><div class="tagline">Impulse</div></div>
     </div>
-  </div>
-  <div>
-    <nav><a href="admin.html">Admin</a><a href="vendor.html">Vendor</a><a href="customer.html">Store</a></nav>
-    <div id="whoami" class="whoami"></div>
-  </div>
-</header>
-
-<main>
-
-  <section id="loginPanel" class="login-panel">
-    <h2>Sign in</h2>
-    <div class="row">
-      <div class="field"><label>Username</label><input id="loginUser" value="carrier-demo"></div>
-      <div class="field"><label>Password</label><input id="loginPass" type="password" value="carrier-demo-pass"></div>
-      <button onclick="login()">Sign in</button>
+    <nav class="side-nav">
+      <button class="side-link active" data-section="dashboard" data-title="Dashboard" onclick="showSection('dashboard')"><span class="icon">📊</span>Dashboard</button>
+      <button class="side-link" data-section="rates" data-title="Rates" onclick="showSection('rates')"><span class="icon">💲</span>Rates</button>
+      <button class="side-link" data-section="shipments" data-title="Shipments" onclick="showSection('shipments')"><span class="icon">🚚</span>Shipments</button>
+    </nav>
+    <div class="sidebar-footer">
+      <div class="user-chip">
+        <div class="avatar" id="avatarInitials">C</div>
+        <div class="who"><div class="user-name" id="whoamiName"></div><div class="user-role" id="whoamiRole"></div></div>
+      </div>
+      <button class="secondary full" onclick="doLogout()">Sign out</button>
     </div>
-    <div id="loginMsg" class="msg"></div>
-    <p class="sub">An admin sets up carrier accounts from <a href="admin.html">admin.html</a>.</p>
-  </section>
+  </aside>
 
-  <div class="gate" style="display:grid; gap:24px;">
+  <div class="main">
+    <header class="topbar">
+      <button class="hamburger" onclick="toggleSidebar()">☰</button>
+      <h1 id="pageTitle">Dashboard</h1>
+    </header>
 
-    <section>
-      <h2>Overview</h2>
-      <div class="stat-grid">
-        <div class="stat-card"><div class="label">Weight tiers configured</div><div class="value" id="statTierCount">—</div></div>
-        <div class="stat-card"><div class="label">Shipments assigned</div><div class="value accent" id="statShipmentCount">—</div></div>
+    <main class="content">
+
+      <div id="section-dashboard" class="content-section active">
+        <section>
+          <h2>Overview</h2>
+          <div class="stat-grid">
+            <div class="stat-card"><div class="label">Weight tiers configured</div><div class="value" id="statTierCount">—</div></div>
+            <div class="stat-card"><div class="label">Shipments assigned</div><div class="value accent" id="statShipmentCount">—</div></div>
+          </div>
+        </section>
       </div>
-    </section>
 
-    <section>
-      <h2>Shipping rates <small>by weight tier</small></h2>
-      <p class="sub">The first tier (ascending by upper limit) an order's total weight fits under is the surcharge applied.</p>
-      <div class="row">
-        <div class="field"><label>Upper limit (kg)</label><input id="tierLimit" value="5.000"></div>
-        <div class="field"><label>Surcharge</label><input id="tierCost" value="25.00"></div>
-        <button onclick="addWeightTier()">Add rate</button>
+      <div id="section-rates" class="content-section">
+        <section>
+          <h2>Shipping rates <small>by weight tier</small></h2>
+          <p class="sub">The first tier (ascending by upper limit) an order's total weight fits under is the surcharge applied.</p>
+          <div class="row">
+            <div class="field"><label>Upper limit (kg)</label><input id="tierLimit" value="5.000"></div>
+            <div class="field"><label>Surcharge</label><input id="tierCost" value="25.00"></div>
+            <button onclick="addWeightTier()">Add rate</button>
+          </div>
+          <div id="tierMsg" class="msg"></div>
+          <table id="tierTable" style="display:none;">
+            <thead><tr><th>Up to</th><th>Surcharge</th><th></th></tr></thead>
+            <tbody id="tierTableBody"></tbody>
+          </table>
+        </section>
       </div>
-      <div id="tierMsg" class="msg"></div>
-      <table id="tierTable" style="display:none;">
-        <thead><tr><th>Up to</th><th>Surcharge</th><th></th></tr></thead>
-        <tbody id="tierTableBody"></tbody>
-      </table>
-    </section>
 
-    <section>
-      <h2>Shipments assigned to you</h2>
-      <div id="orderMsg" class="msg"></div>
-      <div id="orderList"></div>
-    </section>
+      <div id="section-shipments" class="content-section">
+        <section>
+          <h2>Shipments assigned to you</h2>
+          <div id="orderMsg" class="msg"></div>
+          <div id="orderList"></div>
+        </section>
+      </div>
 
+    </main>
+
+    <details class="devlog">
+      <summary>Developer log (raw API requests/responses)</summary>
+      <pre id="log">Nothing sent yet.</pre>
+    </details>
   </div>
-
-  <details class="devlog">
-    <summary>Developer log (raw API requests/responses)</summary>
-    <pre id="log">Nothing sent yet.</pre>
-  </details>
-
-</main>
+</div>
 
 <script src="common.js"></script>
 <script>
-  requireFreshLogin();
-
-  async function login() {
-    if (await doLogin('CARRIER', 'loginUser', 'loginPass', 'loginMsg')) {
-      showGate();
-      listWeightTiers();
-      listAssignedOrders();
-    }
-  }
+  requireRole('CARRIER');
+  initShell();
+  listWeightTiers();
+  listAssignedOrders();
 
   async function addWeightTier() {
     const el = document.getElementById('tierMsg');
